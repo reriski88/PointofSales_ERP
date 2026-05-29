@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: pos-cemilan-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pos_cemilan
+      POSTGRES_USER: pos_cemilan
+      POSTGRES_PASSWORD: pos_cemilan
+    ports:
+      - "5432:5432"
+    volumes:
+      - pos_cemilan_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pos_cemilan -d pos_cemilan"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pos_cemilan_pgdata:

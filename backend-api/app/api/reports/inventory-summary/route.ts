@@ -1,0 +1,25 @@
+import { reportRepository } from "@/backend/repositories/report-repository";
+import { ApiError, handleRouteError, ok } from "@/lib/http";
+import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
+
+export const runtime = "nodejs";
+
+export async function GET(request: Request) {
+  try {
+    const actor = await requireActor(request);
+    await requirePermission(actor, "reports", "view");
+    const { searchParams } = new URL(request.url);
+    const outletId = searchParams.get("outletId");
+    if (outletId) {
+      await requireOutletAccess(actor, outletId);
+    } else if (actor.role !== "owner" && actor.role !== "auditor") {
+      throw new ApiError("BAD_REQUEST", "outletId is required", 400);
+    }
+
+    const [summary] = await reportRepository.inventorySummary(actor.organizationId, outletId);
+
+    return ok(summary);
+  } catch (error) {
+    return handleRouteError(error);
+  }
+}
