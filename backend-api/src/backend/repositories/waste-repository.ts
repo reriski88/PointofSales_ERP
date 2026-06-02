@@ -56,19 +56,17 @@ export const wasteRepository = {
 
   decrementBalance(tx: Tx, outletId: string, skuId: string, quantityBase: number) {
     return tx
-      .insert(inventoryBalance)
-      .values({
-        outletId,
-        skuId,
-        onHandBaseQty: fixed(-quantityBase, 3),
+      .update(inventoryBalance)
+      .set({
+        onHandBaseQty: sql`${inventoryBalance.onHandBaseQty} - ${fixed(quantityBase, 3)}`,
+        updatedAt: new Date(),
       })
-      .onConflictDoUpdate({
-        target: [inventoryBalance.outletId, inventoryBalance.skuId],
-        set: {
-          onHandBaseQty: sql`${inventoryBalance.onHandBaseQty} - ${fixed(quantityBase, 3)}`,
-          updatedAt: new Date(),
-        },
-      });
+      .where(and(
+        eq(inventoryBalance.outletId, outletId),
+        eq(inventoryBalance.skuId, skuId),
+        sql`${inventoryBalance.onHandBaseQty} - ${inventoryBalance.reservedBaseQty} - ${inventoryBalance.holdBaseQty} >= ${fixed(quantityBase, 3)}`,
+      ))
+      .returning({ skuId: inventoryBalance.skuId });
   },
 
   createStockMovement(tx: Tx, values: typeof stockMovement.$inferInsert) {

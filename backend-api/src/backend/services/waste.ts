@@ -172,7 +172,10 @@ async function postWasteMovement(
   unitId: string,
   quantityInput: number,
 ) {
-  await wasteRepository.decrementBalance(tx, outletId, skuId, quantityBase);
+  const decremented = await wasteRepository.decrementBalance(tx, outletId, skuId, quantityBase);
+  if (!decremented.length) {
+    throw new ApiError("CONFLICT", "Stok tersedia tidak cukup atau sedang berubah. Muat ulang data stok.", 409);
+  }
 
   await wasteRepository.createStockMovement(tx, {
     organizationId: actor.organizationId,

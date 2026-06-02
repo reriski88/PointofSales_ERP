@@ -48,6 +48,8 @@ export async function POST(request: Request) {
       {
         name: body.name,
         category: body.category,
+        voidWindowHours: body.voidWindowHours,
+        refundWindowHours: body.refundWindowHours,
       },
       {
         sku: body.sku.sku,

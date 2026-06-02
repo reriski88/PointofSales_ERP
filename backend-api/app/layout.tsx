@@ -7,8 +7,8 @@ import "sweetalert2/dist/sweetalert2.min.css";
 import "./globals.css";
 
 export const metadata = {
-  title: "POS Cemilan API",
-  description: "Local-first POS Cemilan backend API",
+  title: "POS ERP API",
+  description: "Local-first POS ERP backend API",
 };
 
 export const viewport: Viewport = {

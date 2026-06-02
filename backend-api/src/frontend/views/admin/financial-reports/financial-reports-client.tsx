@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useRolePermissions } from "../_components/use-role-permissions";
 import { useToast } from "../_components/toast-provider";
 import { getOutlets, getProfile } from "@/frontend/controllers/admin-data-cache";
+import { useRealtimeEvents } from "@/frontend/controllers/use-realtime-events";
 
 type Outlet = {
   id: string;
@@ -185,6 +186,16 @@ export function FinancialReportsClient() {
     void loadOutlets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOutletId]);
+
+  useRealtimeEvents({
+    topics: ["sales", "inventory", "waste", "purchases", "customers"],
+    enabled: Boolean(outletId),
+    debounceMs: 800,
+    onEvent: (event) => {
+      if (outletId !== allOutletsValue && event.outletId && event.outletId !== outletId) return;
+      void loadFinancialSummary(outletId);
+    },
+  });
 
   const activeRows = report?.sheets[activeTab] ?? [];
 

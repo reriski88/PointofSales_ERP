@@ -2,6 +2,7 @@ import { inventoryRepository } from "@/backend/repositories/inventory-repository
 import { writeAudit } from "@/lib/audit";
 import { ApiError, created, handleRouteError, parseJson } from "@/lib/http";
 import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
+import { publishRealtimeEvent } from "@/lib/realtime";
 import { createInventoryAdjustmentSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -23,6 +24,8 @@ export async function POST(request: Request) {
       skuId: body.skuId,
       type: body.type,
       quantityBase: body.quantityBase,
+      lotCode: body.lotCode,
+      expiryDate: body.expiryDate,
       note: body.note,
       actorUserId: actor.id,
     });
@@ -38,6 +41,18 @@ export async function POST(request: Request) {
       entityId: result.id,
       after: body,
       request,
+    });
+
+    publishRealtimeEvent({
+      organizationId: actor.organizationId,
+      outletId: body.outletId,
+      topics: ["inventory", "dashboard"],
+      type: "inventory.adjusted",
+      payload: {
+        movementId: result.id,
+        skuId: body.skuId,
+        movementType: body.type,
+      },
     });
 
     return created(result);

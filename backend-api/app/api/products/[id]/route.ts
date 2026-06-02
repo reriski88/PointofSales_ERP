@@ -28,6 +28,8 @@ export async function PATCH(request: Request, { params }: Params) {
       const [updatedProduct] = await productRepository.updateProduct(tx, id, actor.organizationId, {
           ...(body.name !== undefined ? { name: body.name } : {}),
           ...(body.category !== undefined ? { category: body.category } : {}),
+          ...(body.voidWindowHours !== undefined ? { voidWindowHours: body.voidWindowHours } : {}),
+          ...(body.refundWindowHours !== undefined ? { refundWindowHours: body.refundWindowHours } : {}),
           ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
           updatedAt: new Date(),
         });

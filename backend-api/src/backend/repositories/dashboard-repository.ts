@@ -116,6 +116,7 @@ export const dashboardRepository = {
         skuCode: sku.sku,
         skuName: sku.name,
         onHandBaseQty: inventoryBalance.onHandBaseQty,
+        availableBaseQty: sql<string>`(${inventoryBalance.onHandBaseQty} - ${inventoryBalance.reservedBaseQty} - ${inventoryBalance.holdBaseQty})::text`,
         minStockBaseQty: sku.minStockBaseQty,
         baseUnitCode: unit.code,
       })
@@ -128,13 +129,13 @@ export const dashboardRepository = {
           eq(outlet.organizationId, input.organizationId),
           inventoryOutletScope,
           eq(outlet.isActive, true),
-          sql`${inventoryBalance.onHandBaseQty} <= ${sku.minStockBaseQty}`,
+          sql`${inventoryBalance.onHandBaseQty} - ${inventoryBalance.reservedBaseQty} - ${inventoryBalance.holdBaseQty} <= ${sku.minStockBaseQty}`,
         ),
       )
       .limit(50);
 
-    const emptyStock = lowStockRows.filter((item) => Number(item.onHandBaseQty) <= 0);
-    const lowStock = lowStockRows.filter((item) => Number(item.onHandBaseQty) > 0);
+    const emptyStock = lowStockRows.filter((item) => Number(item.availableBaseQty) <= 0);
+    const lowStock = lowStockRows.filter((item) => Number(item.availableBaseQty) > 0);
     const activeOutlets = await db
       .select({
         id: outlet.id,

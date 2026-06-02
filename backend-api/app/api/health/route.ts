@@ -8,8 +8,8 @@ export async function GET() {
     await healthRepository.ping();
     return ok({
       status: "ok",
-      service: "pos-cemilan-backend",
-      mode: "local-pc-api",
+      service: "pos-erp-backend",
+      mode: process.env.VERCEL ? "production" : "development",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

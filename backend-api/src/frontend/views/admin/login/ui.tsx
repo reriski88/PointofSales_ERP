@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "../_components/searchable-select";
 import { allOutletsValue, saveSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import type { RoleAccessAction, RoleAccessMenuKey } from "@/lib/role-access";
 
@@ -24,7 +25,11 @@ const routeOrder: Array<{ menuKey: RoleAccessMenuKey; href: string }> = [
   { menuKey: "outlets", href: "/admin/outlets" },
   { menuKey: "users", href: "/admin/users" },
   { menuKey: "products", href: "/admin/products" },
+  { menuKey: "customers", href: "/admin/customers" },
   { menuKey: "inventory", href: "/admin/inventory" },
+  { menuKey: "stockOpname", href: "/admin/stock-opname" },
+  { menuKey: "suppliers", href: "/admin/suppliers" },
+  { menuKey: "purchases", href: "/admin/purchases" },
   { menuKey: "reports", href: "/admin/reports" },
   { menuKey: "financialReports", href: "/admin/financial-reports" },
   { menuKey: "receipt", href: "/admin/receipt" },
@@ -102,14 +107,14 @@ export function AdminLoginForm() {
                 Satu tempat untuk kasir, stok, dan laporan outlet.
               </h1>
               <p className="max-w-lg text-base leading-7 text-[#1D3557]/75">
-                Masuk ke panel admin untuk memantau transaksi cemilan dan menjaga operasional toko tetap rapi.
+                Masuk ke panel admin untuk memantau transaksi, stok, dan operasional outlet tetap rapi.
               </p>
             </div>
           </div>
           <div className="relative mt-6 min-h-[18rem] flex-1 sm:min-h-[21rem] lg:min-h-0">
             <Image
               src="/images/login-pos-cartoon-transaction-transparent.png"
-              alt="Ilustrasi kartun kasir dan pelanggan sedang transaksi POS di toko cemilan"
+              alt="Ilustrasi kartun kasir dan pelanggan sedang transaksi POS"
               fill
               priority
               sizes="(min-width: 1024px) 58vw, 100vw"
@@ -121,7 +126,7 @@ export function AdminLoginForm() {
         <Card className="w-full max-w-md justify-self-center rounded-lg border-[#DDE7DF] bg-white/95 shadow-xl shadow-[#1D3557]/10">
           <CardHeader className="space-y-2 pb-6">
             <CardTitle className="text-2xl text-[#1D3557]">Login Admin</CardTitle>
-            <CardDescription>Gunakan akun admin POS Cemilan.</CardDescription>
+            <CardDescription>Gunakan akun admin POS ERP.</CardDescription>
           </CardHeader>
           <CardContent className="pb-6">
             {!isMounted ? (
@@ -130,18 +135,16 @@ export function AdminLoginForm() {
               <div className="space-y-5">
                 <div className="space-y-2">
                   <Label htmlFor="login-outlet">Pilih Outlet</Label>
-                  <select
-                    id="login-outlet"
-                    className="flex h-11 w-full rounded-md border border-[#DDE7DF] bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[#457B9D]"
+                  <SearchableSelect
                     value={selectedOutletId}
-                    onChange={(event) => setSelectedOutletId(event.target.value)}
-                  >
-                    {outletOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setSelectedOutletId}
+                    options={outletOptions}
+                    placeholder="Pilih outlet"
+                    searchPlaceholder="Cari outlet..."
+                    emptyText="Outlet tidak ditemukan."
+                    triggerClassName="h-11 border-[#DDE7DF] focus-visible:ring-[#457B9D]"
+                    ariaLabel="Pilih Outlet"
+                  />
                 </div>
                 <Button
                   className="h-11 w-full bg-[#E63946] hover:bg-[#C92F3A]"

@@ -2,6 +2,7 @@ import { syncRepository } from "@/backend/repositories/sync-repository";
 import { createSale } from "@/services/sales";
 import { handleRouteError, ok, parseJson } from "@/lib/http";
 import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { publishRealtimeEvent } from "@/lib/realtime";
 import { syncPushSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -15,6 +16,14 @@ export async function POST(request: Request) {
 
     const results = [];
     for (const transaction of body.transactions) {
+      if (transaction.outletId !== body.outletId) {
+        results.push({
+          idempotencyKey: transaction.idempotencyKey,
+          status: "failed",
+          error: "Outlet transaksi tidak sesuai dengan outlet sync.",
+        });
+        continue;
+      }
       await syncRepository.receive({
           organizationId: actor.organizationId,
           outletId: body.outletId,
@@ -24,7 +33,7 @@ export async function POST(request: Request) {
         });
 
       try {
-        const result = await createSale(actor, transaction, request);
+        const result = await createSale(actor, transaction, request, { allowStockConflict: true });
         await syncRepository.updateByIdempotencyKey(actor.organizationId, transaction.idempotencyKey, {
             status: result.sale.status === "sync_review" ? "conflict" : "processed",
             processedSaleId: result.sale.id,
@@ -49,6 +58,19 @@ export async function POST(request: Request) {
         });
       }
     }
+
+    publishRealtimeEvent({
+      organizationId: actor.organizationId,
+      outletId: body.outletId,
+      topics: ["sync", "sales", "inventory", "dashboard", "shift", "customers"],
+      type: "sync.push.processed",
+      payload: {
+        total: results.length,
+        processed: results.filter((item) => item.status === "processed").length,
+        conflict: results.filter((item) => item.status === "conflict").length,
+        failed: results.filter((item) => item.status === "failed").length,
+      },
+    });
 
     return ok({ results });
   } catch (error) {

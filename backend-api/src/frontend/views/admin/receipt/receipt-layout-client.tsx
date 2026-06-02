@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CollapsibleSection } from "../_components/collapsible-section";
+import { SearchableSelect } from "../_components/searchable-select";
 import { useToast } from "../_components/toast-provider";
 import { useRolePermissions } from "../_components/use-role-permissions";
+import { useRealtimeEvents } from "@/frontend/controllers/use-realtime-events";
 
 type ReceiptSection = "header" | "body" | "footer";
 type ReceiptBlock =
@@ -24,6 +26,7 @@ type ReceiptBlock =
 type ReceiptLayout = {
   paperWidth: "58" | "80";
   autoPrint: boolean;
+  printerName: string;
   header: ReceiptBlock[];
   body: ReceiptBlock[];
   footer: ReceiptBlock[];
@@ -34,10 +37,17 @@ type ApiResponse<T> = { data: T };
 type Settings = {
   receiptLayout: ReceiptLayout | null;
 };
+type PrinterOption = {
+  name: string;
+  status: string;
+  portName: string;
+  driverName: string;
+};
 
 const defaultLayout: ReceiptLayout = {
   paperWidth: "58",
   autoPrint: false,
+  printerName: "Thermal Bluetooth RPP02N",
   header: ["logo", "outlet", "address", "cashier", "receiptNumber"],
   body: ["items", "totals", "payment"],
   footer: ["note"],
@@ -69,6 +79,7 @@ export function ReceiptLayoutClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [printers, setPrinters] = useState<PrinterOption[]>([]);
   const [dragged, setDragged] = useState<{
     section: ReceiptSection;
     block: ReceiptBlock;
@@ -78,10 +89,17 @@ export function ReceiptLayoutClient() {
 
   async function loadSettings() {
     setIsLoading(true);
-    const response = await fetch("/api/settings");
+    const [response, printerResponse] = await Promise.all([
+      fetch("/api/settings"),
+      fetch("/api/print/printers"),
+    ]);
     if (response.status === 401) {
       window.location.href = "/admin/login";
       return;
+    }
+    if (printerResponse.ok) {
+      const printerJson = (await printerResponse.json()) as ApiResponse<PrinterOption[]>;
+      setPrinters(printerJson.data);
     }
     if (!response.ok) {
       setMessage("Setting struk belum bisa dimuat.");
@@ -97,6 +115,12 @@ export function ReceiptLayoutClient() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadSettings();
   }, []);
+
+  useRealtimeEvents({
+    topics: ["settings"],
+    debounceMs: 700,
+    onEvent: () => void loadSettings(),
+  });
 
   async function saveLayout() {
     setIsSaving(true);
@@ -157,7 +181,7 @@ export function ReceiptLayoutClient() {
         collapsible={false}
       >
         <div className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div className="space-y-2">
               <Label>Lebar Kertas</Label>
               <select
@@ -186,6 +210,28 @@ export function ReceiptLayoutClient() {
               />
               Print otomatis setelah transaksi selesai
             </label>
+            <div className="space-y-2">
+              <Label>Printer thermal</Label>
+              <SearchableSelect
+                value={layout.printerName}
+                disabled={!access.canEdit}
+                placeholder="Thermal Bluetooth RPP02N"
+                onChange={(value) => setLayout({ ...layout, printerName: value })}
+                options={[
+                  ...(layout.printerName && !printers.some((printer) => printer.name === layout.printerName)
+                    ? [{ value: layout.printerName, label: layout.printerName, description: "Tersimpan di setting" }]
+                    : []),
+                  ...printers.map((printer) => ({
+                    value: printer.name,
+                    label: printer.name,
+                    description: printer.portName ? `${printer.portName} - ${printer.driverName}` : printer.driverName,
+                    keywords: `${printer.name} ${printer.status} ${printer.portName} ${printer.driverName}`,
+                  })),
+                ]}
+                searchPlaceholder="Cari printer..."
+                emptyText="Printer tidak ditemukan."
+              />
+            </div>
             <div className="space-y-2">
               <Label>Catatan Footer</Label>
               <Input
@@ -293,25 +339,35 @@ function DropColumn(props: {
 }
 
 function buildPreview(layout: ReceiptLayout) {
-  const line = layout.paperWidth === "80" ? "-".repeat(42) : "-".repeat(32);
+  const width = layout.paperWidth === "80" ? 42 : 32;
+  const line = "-".repeat(width);
   const lines: string[] = [];
+  const center = (value: string) => {
+    const safe = value.slice(0, width);
+    const leftPad = Math.max(0, Math.floor((width - safe.length) / 2));
+    return `${" ".repeat(leftPad)}${safe}`;
+  };
+  const row = (label: string, value: string) => {
+    const rightSafe = value.slice(0, width);
+    const leftSafe = label.slice(0, Math.max(0, width - rightSafe.length - 1));
+    return `${leftSafe.padEnd(Math.max(0, width - rightSafe.length - 1))} ${rightSafe}`;
+  };
   const renderBlock = (block: ReceiptBlock) => {
-    if (block === "logo") lines.push("[Logo Outlet]");
-    if (block === "outlet") lines.push("POS CEMILAN - Outlet A");
-    if (block === "address") lines.push("Jl. Contoh No. 1");
-    if (block === "cashier") lines.push("Kasir: Admin");
-    if (block === "receiptNumber") lines.push("No: FL-1777440000000");
+    if (block === "logo") lines.push(center("[Logo Outlet]"));
+    if (block === "outlet") lines.push(center("POS ERP - Outlet A"));
+    if (block === "address") lines.push(center("Jl. Contoh No. 1"));
+    if (block === "cashier") lines.push(center("Kasir: Admin"));
+    if (block === "receiptNumber") lines.push(center("No: FL-1777440000000"));
     if (block === "items") {
-      lines.push(line, "Keripik Pedas");
-      lines.push("2 x Rp 10.000        Rp 20.000");
+      lines.push(line, "Contoh Produk");
+      lines.push(row("2 x Rp 10.000", "Rp 20.000"));
     }
     if (block === "totals") {
-      lines.push(line, "Subtotal             Rp 20.000");
-      lines.push("Diskon                    Rp 0");
-      lines.push("TOTAL                Rp 20.000");
+      lines.push(line, row("Subtotal", "Rp 20.000"));
+      lines.push(row("TOTAL", "Rp 20.000"));
     }
-    if (block === "payment") lines.push("Tunai                Rp 20.000");
-    if (block === "note") lines.push(line, layout.footerNote);
+    if (block === "payment") lines.push(row("Tunai", "Rp 20.000"));
+    if (block === "note") lines.push(line, center(layout.footerNote));
   };
   layout.header.forEach(renderBlock);
   layout.body.forEach(renderBlock);

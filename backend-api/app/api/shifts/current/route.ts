@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const outletId = searchParams.get("outletId");
     if (!outletId) {
-      throw new ApiError("BAD_REQUEST", "outletId is required", 400);
+      throw new ApiError("BAD_REQUEST", "Outlet wajib dipilih", 400);
     }
     await requireOutletAccess(actor, outletId);
     const rows = await shiftRepository.findOpen(outletId, actor.id);

@@ -3,6 +3,7 @@
 import { ArrowUpDown, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "./searchable-select";
 
 type Option = {
   value: string;
@@ -41,17 +42,15 @@ export function ListControls(props: {
       {props.filters?.map((filter) => (
         <div key={filter.label} className="space-y-2">
           <Label>{filter.label}</Label>
-          <select
-            className="flex h-10 min-w-40 rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          <SearchableSelect
+            className="min-w-40"
             value={filter.value}
-            onChange={(event) => filter.onChange(event.target.value)}
-          >
-            {filter.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onChange={filter.onChange}
+            options={filter.options}
+            placeholder={`Pilih ${filter.label.toLowerCase()}`}
+            searchPlaceholder={`Cari ${filter.label.toLowerCase()}...`}
+            emptyText={`${filter.label} tidak ditemukan.`}
+          />
         </div>
       ))}
 

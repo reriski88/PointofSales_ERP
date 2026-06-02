@@ -1,6 +1,7 @@
 import { organizationRepository } from "@/backend/repositories/organization-repository";
 import { handleRouteError, ok, parseJson } from "@/lib/http";
 import { requireActor, requirePermission } from "@/lib/rbac";
+import { publishRealtimeEvent } from "@/lib/realtime";
 import { updateSettingsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -26,6 +27,9 @@ export async function PATCH(request: Request) {
     if (body.receiptLayout !== undefined) {
       await requirePermission(actor, "receipt", "edit");
     }
+    if (body.posSettings !== undefined) {
+      await requirePermission(actor, "promotions", "edit");
+    }
 
     const [updated] = await organizationRepository.updateSettings(actor.organizationId, {
         ...(body.defaultOutletLogoUrl !== undefined
@@ -34,8 +38,27 @@ export async function PATCH(request: Request) {
         ...(body.receiptLayout !== undefined
           ? { receiptLayout: body.receiptLayout }
           : {}),
+        ...(body.posSettings !== undefined
+          ? { posSettings: body.posSettings }
+          : {}),
         updatedAt: new Date(),
       });
+
+    publishRealtimeEvent({
+      organizationId: actor.organizationId,
+      topics: [
+        "settings",
+        ...(body.posSettings !== undefined ? ["promotions" as const] : []),
+        ...(body.receiptLayout !== undefined ? ["sales" as const] : []),
+        ...(body.defaultOutletLogoUrl !== undefined ? ["masterData" as const] : []),
+      ],
+      type: "settings.updated",
+      payload: {
+        receiptLayout: body.receiptLayout !== undefined,
+        posSettings: body.posSettings !== undefined,
+        defaultOutletLogoUrl: body.defaultOutletLogoUrl !== undefined,
+      },
+    });
 
     return ok(updated);
   } catch (error) {

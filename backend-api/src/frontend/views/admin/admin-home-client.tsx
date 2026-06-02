@@ -20,7 +20,11 @@ const routeOrder: Array<{ menuKey: RoleAccessMenuKey; href: string }> = [
   { menuKey: "outlets", href: "/admin/outlets" },
   { menuKey: "users", href: "/admin/users" },
   { menuKey: "products", href: "/admin/products" },
+  { menuKey: "customers", href: "/admin/customers" },
   { menuKey: "inventory", href: "/admin/inventory" },
+  { menuKey: "stockOpname", href: "/admin/stock-opname" },
+  { menuKey: "suppliers", href: "/admin/suppliers" },
+  { menuKey: "purchases", href: "/admin/purchases" },
   { menuKey: "reports", href: "/admin/reports" },
   { menuKey: "financialReports", href: "/admin/financial-reports" },
   { menuKey: "receipt", href: "/admin/receipt" },
@@ -77,12 +81,12 @@ export function AdminHomeClient() {
     <>
       <DashboardClient />
       <CollapsibleSection
-        title="Modul POS Dashboard"
+        title="Modul POS Dasbor"
         description="Akses cepat ke modul master data, stok, dan laporan."
       >
         <div className="flex items-center gap-3">
           <BarChart3 className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Modul POS Dashboard</h2>
+          <h2 className="text-lg font-semibold">Modul POS Dasbor</h2>
         </div>
         <DashboardModules />
       </CollapsibleSection>

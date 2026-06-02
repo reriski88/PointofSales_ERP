@@ -3,6 +3,7 @@ import { writeAudit } from "@/lib/audit";
 import { ApiError, created, handleRouteError, parseJson } from "@/lib/http";
 import { fixed } from "@/lib/number";
 import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { publishRealtimeEvent } from "@/lib/realtime";
 import { openShiftSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
     const [existing] = await shiftRepository.findOpen(body.outletId, actor.id);
 
     if (existing) {
-      throw new ApiError("CONFLICT", "Cashier already has an open shift in this outlet", 409);
+      throw new ApiError("CONFLICT", "Kasir sudah memiliki shift terbuka di outlet ini", 409);
     }
 
     const [row] = await shiftRepository.create({
@@ -37,6 +38,14 @@ export async function POST(request: Request) {
       entityId: row.id,
       after: row,
       request,
+    });
+
+    publishRealtimeEvent({
+      organizationId: actor.organizationId,
+      outletId: body.outletId,
+      topics: ["shift", "dashboard"],
+      type: "shift.opened",
+      payload: { shiftId: row.id, cashierUserId: actor.id },
     });
 
     return created(row);

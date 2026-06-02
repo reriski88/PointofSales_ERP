@@ -26,6 +26,7 @@ export const catalogRepository = {
         saleUnitCode: saleUnit.code,
         onHandBaseQty: inventoryBalance.onHandBaseQty,
         reservedBaseQty: inventoryBalance.reservedBaseQty,
+        holdBaseQty: inventoryBalance.holdBaseQty,
       })
       .from(sku)
       .innerJoin(product, eq(product.id, sku.productId))

@@ -7,10 +7,10 @@ Flutter APK kasir untuk POS Cemilan.
 Saat development lokal, arahkan base URL Flutter ke:
 
 ```text
-http://localhost:3000
+http://192.168.1.4:3000
 ```
 
-Saat backend PC di-online-kan lewat Cloudflare Tunnel, ganti base URL ke URL HTTPS tunnel/domain.
+Untuk HP fisik, gunakan IP laptop pada jaringan Wi-Fi yang sama. Jangan gunakan `localhost` di HP karena itu mengarah ke perangkat HP sendiri.
 
 Login admin backend untuk testing:
 

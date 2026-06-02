@@ -2,6 +2,7 @@ import { wasteRepository } from "@/backend/repositories/waste-repository";
 import { createWasteAdjustment } from "@/services/waste";
 import { created, handleRouteError, ok, parseJson } from "@/lib/http";
 import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { publishRealtimeEvent } from "@/lib/realtime";
 import { createWasteAdjustmentSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -23,6 +24,16 @@ export async function POST(request: Request) {
     const body = await parseJson(request, createWasteAdjustmentSchema);
     await requireOutletAccess(actor, body.outletId);
     const result = await createWasteAdjustment(actor, body, request);
+    publishRealtimeEvent({
+      organizationId: actor.organizationId,
+      outletId: body.outletId,
+      topics: result.status === "posted" ? ["waste", "inventory", "dashboard"] : ["waste"],
+      type: "waste.created",
+      payload: {
+        wasteAdjustmentId: result.id,
+        status: result.status,
+      },
+    });
     return created(result);
   } catch (error) {
     return handleRouteError(error);

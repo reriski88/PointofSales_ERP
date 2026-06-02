@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/frontend/controllers/language-provider";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
+import { useRealtimeEvents } from "@/frontend/controllers/use-realtime-events";
 import { CollapsibleSection } from "./_components/collapsible-section";
 
 type ApiResponse<T> = { data: T };
@@ -47,6 +48,7 @@ type StockAlert = {
   skuCode: string;
   skuName: string;
   onHandBaseQty: string;
+  availableBaseQty?: string;
   minStockBaseQty: string;
   baseUnitCode: string;
 };
@@ -136,6 +138,13 @@ export function DashboardClient() {
     void loadSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOutletId]);
+
+  useRealtimeEvents({
+    topics: ["dashboard", "inventory", "sales", "shift", "purchases", "waste"],
+    enabled: Boolean(selectedOutletId),
+    debounceMs: 700,
+    onEvent: () => void loadSummary(),
+  });
 
   return (
     <>
@@ -565,7 +574,7 @@ function stockAlertRow(item: StockAlert, t: (key: string) => string) {
   return {
     key: `${item.outletCode}-${item.skuCode}`,
     title: `${item.skuName} (${item.skuCode})`,
-    detail: `${item.outletName} - ${t("stock")} ${formatNumber(item.onHandBaseQty)} ${item.baseUnitCode || "unit"} / ${t("min")} ${formatNumber(item.minStockBaseQty)} ${item.baseUnitCode || "unit"}`,
+    detail: `${item.outletName} - ${t("stock")} ${formatNumber(item.availableBaseQty ?? item.onHandBaseQty)} ${item.baseUnitCode || "unit"} / ${t("min")} ${formatNumber(item.minStockBaseQty)} ${item.baseUnitCode || "unit"}`,
   };
 }
 

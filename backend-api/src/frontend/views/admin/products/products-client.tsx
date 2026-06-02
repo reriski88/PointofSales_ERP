@@ -10,6 +10,7 @@ import { ListControls } from "../_components/list-controls";
 import { PaginationControls, pageItems } from "../_components/pagination-controls";
 import { confirmAction, useToast } from "../_components/toast-provider";
 import { useRolePermissions } from "../_components/use-role-permissions";
+import { SearchableSelect } from "../_components/searchable-select";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import { useLanguage } from "@/frontend/controllers/language-provider";
 import { getOutlets, getUnits } from "@/frontend/controllers/admin-data-cache";
@@ -34,6 +35,8 @@ type Product = {
   id: string;
   name: string;
   category: string | null;
+  voidWindowHours: number | null;
+  refundWindowHours: number | null;
   isActive: boolean;
   skus: Array<{
     id: string;
@@ -60,6 +63,8 @@ const initialForm = {
   sku: "",
   skuName: "",
   barcode: "",
+  voidWindowHours: "0",
+  refundWindowHours: "0",
   productType: "weight" as UnitKind,
   baseUnitId: "",
   saleUnitId: "",
@@ -72,6 +77,8 @@ const initialForm = {
 type EditProductForm = {
   name: string;
   category: string;
+  voidWindowHours: string;
+  refundWindowHours: string;
   isActive: boolean;
   skus: Array<Product["skus"][number] & {
     productType: UnitKind;
@@ -253,6 +260,8 @@ export function ProductsClient() {
       body: JSON.stringify({
         name: form.name,
         category: form.category || undefined,
+        voidWindowHours: optionalInteger(form.voidWindowHours),
+        refundWindowHours: optionalInteger(form.refundWindowHours),
         sku: {
           sku: form.sku,
           barcode: form.barcode || undefined,
@@ -296,6 +305,8 @@ export function ProductsClient() {
     setEditForm({
       name: product.name,
       category: product.category ?? "",
+      voidWindowHours: optionalNumberForInput(product.voidWindowHours),
+      refundWindowHours: optionalNumberForInput(product.refundWindowHours),
       isActive: product.isActive,
       skus: product.skus.map((item) => ({
         ...item,
@@ -349,6 +360,8 @@ export function ProductsClient() {
       body: JSON.stringify({
         name: nextForm.name,
         category: nextForm.category || null,
+        voidWindowHours: optionalInteger(nextForm.voidWindowHours),
+        refundWindowHours: optionalInteger(nextForm.refundWindowHours),
         isActive: nextForm.isActive,
         skus: nextForm.skus.map((item) => ({
           id: item.id,
@@ -399,6 +412,8 @@ export function ProductsClient() {
     const nextForm: EditProductForm = {
       name: productItem.name,
       category: productItem.category ?? "",
+      voidWindowHours: optionalNumberForInput(productItem.voidWindowHours),
+      refundWindowHours: optionalNumberForInput(productItem.refundWindowHours),
       isActive: nextActive,
       skus: productItem.skus.map((item) => ({
         ...item,
@@ -437,7 +452,22 @@ export function ProductsClient() {
                   categories={categories}
                   onChange={(value) => setForm({ ...form, category: value })}
                 />
+                <Field
+                  label="Maks Pembatalan (jam)"
+                  numeric
+                  value={form.voidWindowHours}
+                  onChange={(value) => setForm({ ...form, voidWindowHours: value })}
+                />
+                <Field
+                  label="Maks Retur/Pengembalian Dana (jam)"
+                  numeric
+                  value={form.refundWindowHours}
+                  onChange={(value) => setForm({ ...form, refundWindowHours: value })}
+                />
               </div>
+              <p className="mt-3 text-sm text-muted-foreground">
+                Kosong berarti tidak dibatasi. Isi 0 untuk menonaktifkan aksi. 24 jam = 1 hari.
+              </p>
             </div>
 
             <div className="rounded-lg border p-4">
@@ -592,7 +622,22 @@ export function ProductsClient() {
                         categories={categories}
                         onChange={(value) => setEditForm({ ...editForm, category: value })}
                       />
+                      <Field
+                        label="Maks Pembatalan (jam)"
+                        numeric
+                        value={editForm.voidWindowHours}
+                        onChange={(value) => setEditForm({ ...editForm, voidWindowHours: value })}
+                      />
+                      <Field
+                        label="Maks Retur/Pengembalian Dana (jam)"
+                        numeric
+                        value={editForm.refundWindowHours}
+                        onChange={(value) => setEditForm({ ...editForm, refundWindowHours: value })}
+                      />
                     </div>
+                    <p className="text-sm text-muted-foreground">
+                      Kosong berarti tidak dibatasi. Isi 0 untuk menonaktifkan aksi. 24 jam = 1 hari.
+                    </p>
                     <label className="flex items-center gap-2 text-sm">
                       <input
                         type="checkbox"
@@ -799,6 +844,10 @@ export function ProductsClient() {
                           </span>
                         </div>
                         <p className="text-sm text-muted-foreground">{item.category || "Tanpa kategori"}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Pembatalan {correctionWindowLabel(item.voidWindowHours)} - Retur/Pengembalian Dana{" "}
+                          {correctionWindowLabel(item.refundWindowHours)}
+                        </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {access.canEdit ? (
@@ -862,7 +911,15 @@ function Field(props: {
         inputMode={props.numeric ? "decimal" : undefined}
         value={props.value}
         readOnly={props.readOnly}
-        onChange={(event) => props.onChange(props.numeric ? formatNumberInput(event.target.value) : event.target.value)}
+        onChange={(event) =>
+          props.onChange(
+            props.numeric
+              ? event.target.value.trim()
+                ? formatNumberInput(event.target.value)
+                : ""
+              : event.target.value,
+          )
+        }
       />
     </div>
   );
@@ -902,17 +959,14 @@ function SelectField(props: {
   return (
     <div className="space-y-2">
       <Label>{props.label}</Label>
-      <select
-        className="flex h-10 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      <SearchableSelect
         value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-      >
-        {props.options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        onChange={props.onChange}
+        options={props.options}
+        placeholder={`Pilih ${props.label.toLowerCase()}`}
+        searchPlaceholder={`Cari ${props.label.toLowerCase()}...`}
+        emptyText={`${props.label} tidak ditemukan.`}
+      />
     </div>
   );
 }
@@ -989,6 +1043,16 @@ function parseIndonesianNumber(value: string) {
   return Number(value.replace(/\./g, "").replace(",", "."));
 }
 
+function optionalInteger(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return Math.max(0, Math.floor(parseIndonesianNumber(trimmed)));
+}
+
+function optionalNumberForInput(value: number | null) {
+  return formatNumberForInput(value ?? 0);
+}
+
 function formatNumberInput(value: string) {
   const cleaned = value.replace(/[^\d,]/g, "");
   const [wholeRaw, decimalRaw] = cleaned.split(",");
@@ -1020,4 +1084,11 @@ function formatNumber(value: string | number, maximumFractionDigits: number) {
     minimumFractionDigits: 0,
     maximumFractionDigits,
   });
+}
+
+function correctionWindowLabel(value: number | null) {
+  if (value === null) return "tidak dibatasi";
+  if (value <= 0) return "nonaktif";
+  if (value % 24 === 0) return `${value / 24} hari`;
+  return `${value} jam`;
 }

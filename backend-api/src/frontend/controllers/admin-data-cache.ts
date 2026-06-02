@@ -19,6 +19,8 @@ export type CachedOutlet = {
   id: string;
   name: string;
   code: string;
+  address?: string | null;
+  logoUrl?: string | null;
   isActive?: boolean;
 };
 

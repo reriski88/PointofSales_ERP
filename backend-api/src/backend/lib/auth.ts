@@ -5,13 +5,13 @@ import { bearer, openAPI } from "better-auth/plugins";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 
-const trustedOrigins = (process.env.TRUSTED_ORIGINS ?? "http://localhost:3000,poscemilan://,poscemilan://*")
+const trustedOrigins = (process.env.TRUSTED_ORIGINS ?? "http://localhost:3000,pos://,pos://*,poscemilan://,poscemilan://*")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
 export const auth = betterAuth({
-  appName: "POS Cemilan",
+  appName: "POS ERP",
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins,

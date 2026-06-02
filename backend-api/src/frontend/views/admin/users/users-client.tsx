@@ -28,6 +28,7 @@ import {
 } from "../_components/pagination-controls";
 import { confirmAction, useToast } from "../_components/toast-provider";
 import { useRolePermissions } from "../_components/use-role-permissions";
+import { SearchableSelect } from "../_components/searchable-select";
 import { getOutlets, getProfile } from "@/frontend/controllers/admin-data-cache";
 
 type Outlet = { id: string; name: string; code: string };
@@ -412,19 +413,14 @@ export function UsersClient() {
           />
           <div className="space-y-2">
             <Label>Role</Label>
-            <select
-              className="flex h-10 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            <SearchableSelect
               value={form.role}
-              onChange={(event) =>
-                setForm({ ...form, role: event.target.value })
-              }
-            >
-              {availableRoleOptions.map((role) => (
-                <option key={role.value} value={role.value}>
-                  {role.label}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setForm({ ...form, role: value })}
+              options={availableRoleOptions}
+              placeholder="Pilih role"
+              searchPlaceholder="Cari role..."
+              emptyText="Role tidak tersedia."
+            />
           </div>
           <div className="space-y-2">
             <Label>Akses Outlet</Label>
@@ -559,22 +555,19 @@ export function UsersClient() {
                     />
                     <div className="space-y-2">
                       <Label>Role</Label>
-                      <select
-                        className="flex h-10 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      <SearchableSelect
                         value={editForm.role}
-                        onChange={(event) =>
+                        onChange={(value) =>
                           setEditForm({
                             ...editForm,
-                            role: event.target.value,
+                            role: value,
                           })
                         }
-                      >
-                        {availableRoleOptions.map((role) => (
-                          <option key={role.value} value={role.value}>
-                            {role.label}
-                          </option>
-                        ))}
-                      </select>
+                        options={availableRoleOptions}
+                        placeholder="Pilih role"
+                        searchPlaceholder="Cari role..."
+                        emptyText="Role tidak tersedia."
+                      />
                     </div>
                   </div>
                   <label className="flex items-center gap-2 text-sm">

@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Swal from "sweetalert2";
 import {
   BarChart3,
+  Ban,
   Boxes,
   ChevronLeft,
   ChevronRight,
+  Printer,
   RefreshCw,
+  Undo2,
   Scale,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +29,7 @@ import {
 } from "../_components/pagination-controls";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import { getOutlets, getProfile } from "@/frontend/controllers/admin-data-cache";
+import { useRealtimeEvents } from "@/frontend/controllers/use-realtime-events";
 
 type Outlet = {
   id: string;
@@ -57,12 +62,20 @@ type WasteSummary = {
 
 type SalesDetail = {
   id: string;
+  outletName: string;
+  outletLogoUrl: string | null;
   receiptNumber: string;
   status: string;
   source: string;
   cashierName: string | null;
   subtotal: string;
   discountTotal: string;
+  taxTotal: string;
+  serviceChargeTotal: string;
+  donationTotal: string;
+  roundingTotal: string;
+  cashTenderedTotal: string;
+  changeTotal: string;
   grandTotal: string;
   cogsTotal: string;
   grossProfit: string;
@@ -72,6 +85,12 @@ type SalesDetail = {
     method: string;
     amount: string;
     reference: string | null;
+  }>;
+  promotions: Array<{
+    name: string;
+    code: string | null;
+    type: string;
+    discountTotal: string;
   }>;
   items: Array<{
     skuId: string;
@@ -84,10 +103,21 @@ type SalesDetail = {
     unitPrice: string;
     discountTotal: string;
     lineTotal: string;
+    voidWindowHours: number | null;
+    refundWindowHours: number | null;
   }>;
   createdAt: string;
 };
 type SalesDetailItem = SalesDetail["items"][number];
+type ReceiptSettings = {
+  defaultOutletLogoUrl?: string | null;
+  receiptLayout?: {
+    autoPrint?: boolean;
+    printerName?: string;
+    paperWidth?: "58" | "80";
+    header?: string[];
+  } | null;
+};
 type WasteDetail = {
   id: string;
   outletName: string;
@@ -103,6 +133,8 @@ type WasteDetail = {
   requestedByName: string | null;
   createdAt: string;
 };
+
+const defaultThermalPrinterName = "Thermal Bluetooth RPP02N";
 
 export function ReportsClient() {
   const { selectedOutletId } = useSelectedOutlet();
@@ -120,6 +152,10 @@ export function ReportsClient() {
   const [detailSortBy, setDetailSortBy] = useState("date-desc");
   const [detailPage, setDetailPage] = useState(1);
   const [detailPageSize, setDetailPageSize] = useState(10);
+  const [canManageSaleCorrections, setCanManageSaleCorrections] = useState(false);
+  const [actionSaleId, setActionSaleId] = useState<string | null>(null);
+  const [reprintSaleId, setReprintSaleId] = useState<string | null>(null);
+  const [receiptSettings, setReceiptSettings] = useState<ReceiptSettings | null>(null);
 
   const statusOptions = useMemo(
     () =>
@@ -208,8 +244,20 @@ export function ReportsClient() {
 
   async function loadOutlets() {
     try {
-      const [profile, outlets] = await Promise.all([getProfile(), getOutlets()]);
+      const [profile, outlets, settingsResponse] = await Promise.all([
+        getProfile(),
+        getOutlets(),
+        fetch("/api/settings"),
+      ]);
+      if (settingsResponse.status === 401) {
+        window.location.assign("/admin/login");
+        return;
+      }
+      if (settingsResponse.ok) {
+        setReceiptSettings(((await settingsResponse.json()) as ApiResponse<ReceiptSettings>).data);
+      }
       const nextCanViewAll = ["owner", "auditor"].includes(profile.role);
+      setCanManageSaleCorrections(["owner", "admin_outlet"].includes(profile.role));
       const selectedIsAllowed =
         selectedOutletId === allOutletsValue
           ? nextCanViewAll
@@ -270,7 +318,7 @@ export function ReportsClient() {
       wasteResponse.status === 401 ||
       wasteDetailResponse.status === 401
     ) {
-      window.location.href = "/admin/login";
+      window.location.assign("/admin/login");
       return;
     }
 
@@ -300,11 +348,120 @@ export function ReportsClient() {
     setIsLoading(false);
   }
 
+  async function submitSaleCorrection(item: SalesDetail, action: "void" | "refund") {
+    const label = action === "void" ? "pembatalan transaksi" : "retur/pengembalian dana";
+    const correctionInput = await requestSaleCorrectionInput(item.receiptNumber, action);
+    if (!correctionInput) return;
+    if (correctionInput.reason.length < 3) {
+      await Swal.fire({
+        icon: "warning",
+        title: "Alasan terlalu pendek",
+        text: "Alasan minimal 3 karakter.",
+      });
+      return;
+    }
+
+    setActionSaleId(item.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/sales/${item.id}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          action === "refund"
+            ? { reason: correctionInput.reason, restock: correctionInput.restock }
+            : { reason: correctionInput.reason },
+        ),
+      });
+      if (!response.ok) {
+        setMessage(await readError(response, `${label} gagal.`));
+        return;
+      }
+      setMessage(
+        `${item.receiptNumber} berhasil diproses ${
+          action === "void" ? "pembatalan transaksi" : "retur/pengembalian dana"
+        }.`,
+      );
+      await Swal.fire({
+        icon: "success",
+        title: "Berhasil",
+        text: `${item.receiptNumber} berhasil diproses.`,
+      });
+      await loadReports();
+    } catch {
+      setMessage(`${label} gagal. Koneksi server tidak tersedia.`);
+    } finally {
+      setActionSaleId(null);
+    }
+  }
+
+  async function reprintSale(item: SalesDetail) {
+    const layout = receiptSettings?.receiptLayout;
+    const printerName = layout?.printerName?.trim() || defaultThermalPrinterName;
+    setReprintSaleId(item.id);
+    setMessage(null);
+    try {
+      const logoRasterBase64 = await buildReceiptLogoRasterBase64({
+        logoUrl: item.outletLogoUrl || receiptSettings?.defaultOutletLogoUrl,
+        enabled: layout?.header?.includes("logo") ?? true,
+        paperWidth: layout?.paperWidth === "80" ? "80" : "58",
+      });
+      const response = await fetch("/api/print/receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          printerName,
+          logoRasterBase64,
+          text: buildSalesDetailReceiptText(item),
+        }),
+      });
+      if (!response.ok) {
+        const error = await readError(response, "Cetak ulang struk gagal.");
+        setMessage(error);
+        await Swal.fire({
+          icon: "error",
+          title: "Cetak ulang gagal",
+          text: error,
+        });
+        return;
+      }
+      await Swal.fire({
+        icon: "success",
+        title: "Struk dicetak ulang",
+        text: `${item.receiptNumber} terkirim ke printer ${printerName}.`,
+      });
+    } catch {
+      const error = `Cetak ulang struk gagal. Server lokal tidak dapat menghubungi printer ${printerName}.`;
+      setMessage(error);
+      await Swal.fire({
+        icon: "error",
+        title: "Cetak ulang gagal",
+        text: error,
+      });
+    } finally {
+      setReprintSaleId(null);
+    }
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadOutlets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOutletId]);
+
+  useRealtimeEvents({
+    topics: ["sales", "inventory", "waste", "purchases", "customers", "settings"],
+    enabled: Boolean(outletId),
+    debounceMs: 800,
+    onEvent: (event) => {
+      if (outletId !== allOutletsValue && event.outletId && event.outletId !== outletId) return;
+      if (event.topics.includes("settings")) {
+        void loadOutlets();
+        return;
+      }
+      void loadReports(outletId);
+    },
+  });
 
   return (
     <div className="space-y-6">
@@ -345,14 +502,14 @@ export function ReportsClient() {
           title="Penjualan"
           rows={[
             ["Transaksi", sales?.transactionCount ?? 0],
-            ["Gross Sales", currency(sales?.grossSales)],
-            ["Net Sales", currency(sales?.netSales)],
-            ["Gross Profit", currency(sales?.grossProfit)],
+            ["Penjualan Kotor", currency(sales?.grossSales)],
+            ["Penjualan Bersih", currency(sales?.netSales)],
+            ["Laba Kotor", currency(sales?.grossProfit)],
           ]}
         />
         <ReportCard
           icon={Boxes}
-          title="Inventory"
+          title="Persediaan"
           rows={[
             ["Jumlah SKU", inventory?.skuCount ?? 0],
             [
@@ -364,11 +521,11 @@ export function ReportsClient() {
         />
         <ReportCard
           icon={Scale}
-          title="Waste / Remahan"
+          title="Remahan / Rusak"
           rows={[
-            ["Adjustment", waste?.adjustmentCount ?? 0],
+            ["Penyesuaian", waste?.adjustmentCount ?? 0],
             ["Qty Dasar", `${number(waste?.totalQuantityBase)} satuan dasar`],
-            ["Estimasi Loss", currency(waste?.totalEstimatedLoss)],
+            ["Estimasi Kerugian", currency(waste?.totalEstimatedLoss)],
           ]}
         />
       </div>
@@ -462,36 +619,97 @@ export function ReportsClient() {
           />
         </div>
         <div className="mt-4 grid gap-3">
-          {pagedSalesDetails.map((item) => (
-            <div key={item.id} className="rounded-lg border p-4 text-sm">
-              <div className="grid gap-3 lg:grid-cols-[1.2fr_0.9fr_0.7fr_0.8fr_0.8fr_0.8fr_0.8fr]">
-                <div>
-                  <p className="font-medium">{item.receiptNumber}</p>
-                  <p className="text-muted-foreground">
-                    {formatDate(item.createdAt)}
-                  </p>
+          {pagedSalesDetails.map((item) => {
+            const canVoidSale = canCorrectSale(item, "void");
+            const canRefundSale = canCorrectSale(item, "refund");
+            return (
+              <div key={item.id} className="rounded-lg border p-4 text-sm">
+                <div className="grid gap-3 lg:grid-cols-[1.2fr_0.9fr_0.7fr_0.8fr_0.8fr_0.8fr_0.8fr]">
+                  <div>
+                    <p className="font-medium">{item.receiptNumber}</p>
+                    <p className="text-muted-foreground">
+                      {formatDate(item.createdAt)}
+                    </p>
+                  </div>
+                  <div>
+                    <p>{item.cashierName || "Kasir"}</p>
+                    <p className="text-muted-foreground">
+                      {item.paymentMethods || "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p>{item.itemCount.toLocaleString("id-ID")} item</p>
+                    <p className="text-muted-foreground">{saleStatusLabel(item.status)}</p>
+                  </div>
+                  <MetricText label="Subtotal" value={currency(item.subtotal)} />
+                  <MetricText
+                    label="Diskon"
+                    value={currency(item.discountTotal)}
+                  />
+                  <MetricText label="Pajak" value={currency(item.taxTotal)} />
+                  <MetricText label="Service" value={currency(item.serviceChargeTotal)} />
+                  <MetricText label="Total" value={currency(item.grandTotal)} />
+                  <MetricText label="Laba" value={currency(item.grossProfit)} />
                 </div>
-                <div>
-                  <p>{item.cashierName || "Kasir"}</p>
-                  <p className="text-muted-foreground">
-                    {item.paymentMethods || "-"}
-                  </p>
+                {item.promotions.length ? (
+                  <div className="mt-3 rounded-md border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold uppercase text-muted-foreground">Promo</p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {item.promotions.map((promo, index) => (
+                        <div key={`${promo.name}-${index}`} className="text-sm">
+                          <p className="font-medium">{promo.name}</p>
+                          <p className="text-muted-foreground">
+                            {promo.code || "Otomatis"} - {currency(promo.discountTotal)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <SaleItemsList saleId={item.id} items={item.items} />
+                <div className="mt-3 flex flex-wrap justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={reprintSaleId === item.id}
+                    onClick={() => void reprintSale(item)}
+                  >
+                    <Printer className="h-4 w-4" />
+                    Cetak ulang
+                  </Button>
+                  {canManageSaleCorrections && item.status === "completed" && (canVoidSale || canRefundSale) ? (
+                    <>
+                    {canVoidSale ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={actionSaleId === item.id}
+                        onClick={() => void submitSaleCorrection(item, "void")}
+                      >
+                        <Ban className="h-4 w-4" />
+                        Batalkan
+                      </Button>
+                    ) : null}
+                    {canRefundSale ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={actionSaleId === item.id}
+                        onClick={() => void submitSaleCorrection(item, "refund")}
+                      >
+                        <Undo2 className="h-4 w-4" />
+                        Retur/Pengembalian Dana
+                      </Button>
+                    ) : null}
+                    </>
+                  ) : null}
                 </div>
-                <div>
-                  <p>{item.itemCount.toLocaleString("id-ID")} item</p>
-                  <p className="text-muted-foreground">{item.status}</p>
-                </div>
-                <MetricText label="Subtotal" value={currency(item.subtotal)} />
-                <MetricText
-                  label="Diskon"
-                  value={currency(item.discountTotal)}
-                />
-                <MetricText label="Total" value={currency(item.grandTotal)} />
-                <MetricText label="Laba" value={currency(item.grossProfit)} />
               </div>
-              <SaleItemsList saleId={item.id} items={item.items} />
-            </div>
-          ))}
+            );
+          })}
           {!visibleSalesDetails.length && !isLoading ? (
             <p className="text-sm text-muted-foreground">
               Data transaksi tidak ditemukan.
@@ -731,4 +949,222 @@ function wasteReasonLabel(value: string) {
     other: "Lainnya",
   };
   return labels[value] ?? value;
+}
+
+function saleStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    completed: "Selesai",
+    voided: "Dibatalkan",
+    refunded: "Dana dikembalikan",
+    sync_review: "Perlu ditinjau",
+  };
+  return labels[value] ?? value;
+}
+
+function canCorrectSale(item: SalesDetail, action: "void" | "refund") {
+  if (!item.items.length) return false;
+  const saleAgeHours = (Date.now() - new Date(item.createdAt).getTime()) / (1000 * 60 * 60);
+  const policyField = action === "void" ? "voidWindowHours" : "refundWindowHours";
+  return item.items.every((line) => {
+    const windowHours = line[policyField];
+    if (windowHours === null) return true;
+    return windowHours > 0 && saleAgeHours <= windowHours;
+  });
+}
+
+function buildSalesDetailReceiptText(item: SalesDetail) {
+  const width = 32;
+  const separator = "-".repeat(width);
+  const center = (value: string) => {
+    const safe = value.slice(0, width);
+    const leftPad = Math.max(0, Math.floor((width - safe.length) / 2));
+    return `${" ".repeat(leftPad)}${safe}`;
+  };
+  const row = (left: string, right: string) => {
+    const rightSafe = right.slice(0, width);
+    const leftSafe = left.slice(0, Math.max(0, width - rightSafe.length - 1));
+    return `${leftSafe.padEnd(Math.max(0, width - rightSafe.length - 1))} ${rightSafe}`;
+  };
+  const cashAppliedTotal = item.payments
+    .filter((payment) => payment.method === "cash")
+    .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  const cashDisplayTotal = Math.max(Number(item.cashTenderedTotal ?? 0), cashAppliedTotal);
+  const change = Number(item.changeTotal ?? 0);
+  const lines = [
+    center(item.outletName || "Outlet"),
+    center(`Kasir: ${item.cashierName || "Kasir"}`),
+    center(`No: ${item.receiptNumber}`),
+    center(formatDate(item.createdAt)),
+    center("CETAK ULANG"),
+    separator,
+    ...item.items.flatMap((line) => [
+      line.name.slice(0, width),
+      row(`${number(line.quantityInput)} ${line.unitCode || "unit"} x ${currency(line.unitPrice)}`, currency(line.lineTotal)),
+      ...(Number(line.discountTotal ?? 0) > 0 ? [row("Diskon item", currency(line.discountTotal))] : []),
+    ]),
+    separator,
+    ...(Number(item.subtotal ?? 0) > 0 ? [row("Subtotal", currency(item.subtotal))] : []),
+    ...(Number(item.discountTotal ?? 0) > 0 ? [row("Diskon", currency(item.discountTotal))] : []),
+    ...(Number(item.taxTotal ?? 0) > 0 ? [row("Pajak", currency(item.taxTotal))] : []),
+    ...(Number(item.serviceChargeTotal ?? 0) > 0 ? [row("Service", currency(item.serviceChargeTotal))] : []),
+    ...(Number(item.donationTotal ?? 0) > 0 ? [row("Donasi", currency(item.donationTotal))] : []),
+    ...(Number(item.roundingTotal ?? 0) > 0 ? [row("Pembulatan", currency(item.roundingTotal))] : []),
+    row("TOTAL", currency(item.grandTotal)),
+    ...item.payments
+      .filter((payment) => Number(payment.amount ?? 0) > 0 && payment.method !== "cash")
+      .map((payment) => row(paymentMethodLabel(payment.method), currency(payment.amount))),
+    ...(cashDisplayTotal > 0
+      ? [row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", currency(cashDisplayTotal))]
+      : []),
+    ...(change > 0 ? [row("Kembali", currency(change))] : []),
+    separator,
+    center("Terima kasih"),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+function paymentMethodLabel(method: string) {
+  const labels: Record<string, string> = {
+    cash: "Tunai",
+    qris: "QRIS",
+    transfer: "Transfer",
+    card: "Kartu",
+    ewallet: "E-Wallet",
+    other: "Lainnya",
+  };
+  return labels[method] ?? method;
+}
+
+async function buildReceiptLogoRasterBase64(input: {
+  logoUrl?: string | null;
+  enabled: boolean;
+  paperWidth: "58" | "80";
+}) {
+  if (!input.enabled || !input.logoUrl || typeof window === "undefined") {
+    return undefined;
+  }
+  try {
+    const image = await loadReceiptImage(input.logoUrl);
+    const printableWidth = input.paperWidth === "80" ? 576 : 384;
+    const maxLogoWidth = input.paperWidth === "80" ? 320 : 220;
+    const maxLogoHeight = 128;
+    const scale = Math.min(
+      1,
+      maxLogoWidth / image.naturalWidth,
+      maxLogoHeight / image.naturalHeight,
+    );
+    const logoWidth = Math.max(8, Math.floor(image.naturalWidth * scale));
+    const logoHeight = Math.max(8, Math.floor(image.naturalHeight * scale));
+    const centeredWidth = Math.min(printableWidth, Math.ceil(logoWidth / 8) * 8);
+    const canvas = document.createElement("canvas");
+    canvas.width = centeredWidth;
+    canvas.height = logoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return undefined;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, Math.max(0, Math.floor((centeredWidth - logoWidth) / 2)), 0, logoWidth, logoHeight);
+
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    const widthBytes = Math.ceil(canvas.width / 8);
+    const raster = new Uint8Array(widthBytes * canvas.height);
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const index = (y * canvas.width + x) * 4;
+        const alpha = imageData[index + 3] / 255;
+        const luminance =
+          (imageData[index] * 0.299 + imageData[index + 1] * 0.587 + imageData[index + 2] * 0.114) * alpha +
+          255 * (1 - alpha);
+        if (luminance < 170) {
+          raster[y * widthBytes + Math.floor(x / 8)] |= 0x80 >> (x % 8);
+        }
+      }
+    }
+
+    const command = new Uint8Array([
+      27, 97, 1,
+      29, 118, 48, 0,
+      widthBytes & 0xff,
+      (widthBytes >> 8) & 0xff,
+      canvas.height & 0xff,
+      (canvas.height >> 8) & 0xff,
+      ...raster,
+      10,
+      27, 97, 0,
+    ]);
+    return uint8ToBase64(command);
+  } catch {
+    return undefined;
+  }
+}
+
+function loadReceiptImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    if (!src.startsWith("data:")) {
+      image.crossOrigin = "anonymous";
+    }
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+
+function uint8ToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    const chunk = bytes.subarray(index, index + 0x8000);
+    binary += String.fromCharCode(...chunk);
+  }
+  return window.btoa(binary);
+}
+
+async function requestSaleCorrectionInput(receiptNumber: string, action: "void" | "refund") {
+  const isRefund = action === "refund";
+  const result = await Swal.fire({
+    title: isRefund ? "Retur/Pengembalian Dana" : "Pembatalan Transaksi",
+    html: `
+      <div style="text-align:left">
+        <label for="sale-correction-reason" style="display:block;margin-bottom:6px;font-weight:600">Alasan</label>
+        <textarea id="sale-correction-reason" class="swal2-textarea" placeholder="Tulis alasan untuk ${receiptNumber}" style="margin:0;width:100%;height:110px"></textarea>
+        ${
+          isRefund
+            ? `<label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+                <input id="sale-correction-restock" type="checkbox" checked />
+                <span>Kembalikan item ke stok</span>
+              </label>`
+            : ""
+        }
+      </div>
+    `,
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: isRefund ? "Proses Retur/Pengembalian Dana" : "Proses Pembatalan",
+    cancelButtonText: "Batal",
+    focusConfirm: false,
+    preConfirm: () => {
+      const reasonElement = document.getElementById("sale-correction-reason") as HTMLTextAreaElement | null;
+      const restockElement = document.getElementById("sale-correction-restock") as HTMLInputElement | null;
+      const reason = reasonElement?.value.trim() ?? "";
+      if (reason.length < 3) {
+        Swal.showValidationMessage("Alasan minimal 3 karakter.");
+        return false;
+      }
+      return {
+        reason,
+        restock: restockElement?.checked ?? true,
+      };
+    },
+  });
+
+  return result.isConfirmed ? result.value : null;
+}
+
+async function readError(response: Response, fallback: string) {
+  try {
+    const json = (await response.json()) as { error?: { message?: string } };
+    return json.error?.message ? `${fallback} ${json.error.message}` : fallback;
+  } catch {
+    return fallback;
+  }
 }

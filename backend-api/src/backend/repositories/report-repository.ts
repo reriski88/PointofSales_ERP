@@ -1,17 +1,19 @@
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { inventoryBalance, outlet, payment, sale, saleItem, sku, unit, user, wasteAdjustment } from "@/db/schema";
+import { inventoryBalance, outlet, payment, product, sale, saleItem, salePromotion, sku, unit, user, wasteAdjustment } from "@/db/schema";
 
 export const reportRepository = {
   inventorySummary(organizationId: string, outletId?: string | null) {
     const conditions = [eq(sku.organizationId, organizationId)];
     if (outletId) conditions.push(eq(inventoryBalance.outletId, outletId));
+    const availableBaseQty = sql`${inventoryBalance.onHandBaseQty} - ${inventoryBalance.reservedBaseQty} - ${inventoryBalance.holdBaseQty}`;
 
     return db
       .select({
         skuCount: sql<number>`count(*)::int`,
         totalOnHandBaseQty: sql<string>`coalesce(sum(${inventoryBalance.onHandBaseQty}), 0)::text`,
-        criticalStockCount: sql<number>`count(*) filter (where ${inventoryBalance.onHandBaseQty} <= ${sku.minStockBaseQty})::int`,
+        totalAvailableBaseQty: sql<string>`coalesce(sum(${availableBaseQty}), 0)::text`,
+        criticalStockCount: sql<number>`count(*) filter (where ${availableBaseQty} <= ${sku.minStockBaseQty})::int`,
       })
       .from(inventoryBalance)
       .innerJoin(sku, eq(sku.id, inventoryBalance.skuId))
@@ -65,12 +67,20 @@ export const reportRepository = {
     return db
       .select({
         id: sale.id,
+        outletName: outlet.name,
+        outletLogoUrl: outlet.logoUrl,
         receiptNumber: sale.receiptNumber,
         status: sale.status,
         source: sale.source,
         cashierName: user.name,
         subtotal: sale.subtotal,
         discountTotal: sale.discountTotal,
+        taxTotal: sale.taxTotal,
+        serviceChargeTotal: sale.serviceChargeTotal,
+        donationTotal: sale.donationTotal,
+        roundingTotal: sale.roundingTotal,
+        cashTenderedTotal: sale.cashTenderedTotal,
+        changeTotal: sale.changeTotal,
         grandTotal: sale.grandTotal,
         cogsTotal: sale.cogsTotal,
         grossProfit: sql<string>`(${sale.grandTotal} - ${sale.cogsTotal})::text`,
@@ -95,10 +105,13 @@ export const reportRepository = {
             'baseUnitCode', base_unit.code,
             'unitPrice', line.unit_price,
             'discountTotal', line.discount_total,
-            'lineTotal', line.line_total
+            'lineTotal', line.line_total,
+            'voidWindowHours', item_product.void_window_hours,
+            'refundWindowHours', item_product.refund_window_hours
           ) order by line.created_at)
           from ${saleItem} line
           left join ${sku} item_sku on item_sku.id = line.sku_id
+          left join ${product} item_product on item_product.id = item_sku.product_id
           left join ${unit} input_unit on input_unit.id = line.unit_id
           left join ${unit} base_unit on base_unit.id = item_sku.base_unit_id
           where line.sale_id = ${sale.id}
@@ -112,9 +125,20 @@ export const reportRepository = {
           from ${payment}
           where ${payment.saleId} = ${sale.id}
         ), '[]'::json)`,
+        promotions: sql`coalesce((
+          select json_agg(json_build_object(
+            'name', ${salePromotion.nameSnapshot},
+            'code', ${salePromotion.codeSnapshot},
+            'type', ${salePromotion.typeSnapshot},
+            'discountTotal', ${salePromotion.discountTotal}
+          ) order by ${salePromotion.createdAt})
+          from ${salePromotion}
+          where ${salePromotion.saleId} = ${sale.id}
+        ), '[]'::json)`,
         createdAt: sale.createdAt,
       })
       .from(sale)
+      .innerJoin(outlet, eq(outlet.id, sale.outletId))
       .leftJoin(user, eq(user.id, sale.cashierUserId))
       .where(and(...conditions))
       .orderBy(desc(sale.createdAt))
@@ -176,10 +200,12 @@ export const reportRepository = {
   inventoryValuation(organizationId: string, outletId?: string | null) {
     const conditions = [eq(outlet.organizationId, organizationId)];
     if (outletId) conditions.push(eq(inventoryBalance.outletId, outletId));
+    const availableBaseQty = sql`${inventoryBalance.onHandBaseQty} - ${inventoryBalance.reservedBaseQty} - ${inventoryBalance.holdBaseQty}`;
 
     return db
       .select({
         inventoryValue: sql<string>`coalesce(sum(${inventoryBalance.onHandBaseQty} * ${sku.cost}), 0)::text`,
+        availableInventoryValue: sql<string>`coalesce(sum(${availableBaseQty} * ${sku.cost}), 0)::text`,
         skuCount: sql<number>`count(distinct ${sku.id})::int`,
       })
       .from(inventoryBalance)

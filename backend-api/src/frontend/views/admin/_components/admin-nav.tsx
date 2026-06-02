@@ -8,21 +8,37 @@ import {
   Boxes,
   Building2,
   Calculator,
+  Contact,
+  BadgePercent,
   FileSpreadsheet,
   LayoutDashboard,
   LogOut,
   Menu,
   PackageSearch,
   Settings2,
+  ShoppingBag,
+  ArrowRightLeft,
+  ClipboardList,
   UserCircle,
   ReceiptText,
   ShieldCheck,
+  Truck,
   Users,
   X,
 } from "lucide-react";
 import { useLanguage } from "@/frontend/controllers/language-provider";
-import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
-import { clearAdminDataCache, getCurrentAccess, getOutlets, getProfile } from "@/frontend/controllers/admin-data-cache";
+import {
+  allOutletsValue,
+  useSelectedOutlet,
+} from "@/frontend/controllers/selected-outlet-provider";
+import {
+  clearAdminDataCache,
+  getCurrentAccess,
+  getOutlets,
+  getProfile,
+} from "@/frontend/controllers/admin-data-cache";
+// import { AiChatWidget } from "./ai-chat-widget";
+import { SearchableSelect } from "./searchable-select";
 
 type MenuKey =
   | "dashboard"
@@ -31,7 +47,12 @@ type MenuKey =
   | "users"
   | "roleAccess"
   | "products"
+  | "customers"
+  | "promotions"
   | "inventory"
+  | "stockOpname"
+  | "suppliers"
+  | "purchases"
   | "reports"
   | "financialReports"
   | "receipt"
@@ -53,32 +74,123 @@ const navGroups: NavGroup[] = [
   {
     labelKey: "menuGroupOperations",
     items: [
-      { href: "/admin", labelKey: "dashboard", icon: LayoutDashboard, menuKey: "dashboard" },
-      { href: "/admin/cashier", labelKey: "cashier", icon: Calculator, menuKey: "cashier" },
+      {
+        href: "/admin",
+        labelKey: "dashboard",
+        icon: LayoutDashboard,
+        menuKey: "dashboard",
+      },
+      {
+        href: "/admin/cashier",
+        labelKey: "cashier",
+        icon: Calculator,
+        menuKey: "cashier",
+      },
     ],
   },
   {
     labelKey: "menuGroupMasterData",
     items: [
-      { href: "/admin/outlets", labelKey: "outlets", icon: Building2, menuKey: "outlets" },
-      { href: "/admin/products", labelKey: "products", icon: Boxes, menuKey: "products" },
-      { href: "/admin/inventory", labelKey: "inventory", icon: PackageSearch, menuKey: "inventory" },
-      { href: "/admin/users", labelKey: "usersCashiers", icon: Users, menuKey: "users" },
+      {
+        href: "/admin/outlets",
+        labelKey: "outlets",
+        icon: Building2,
+        menuKey: "outlets",
+      },
+      {
+        href: "/admin/products",
+        labelKey: "products",
+        icon: Boxes,
+        menuKey: "products",
+      },
+      {
+        href: "/admin/customers",
+        labelKey: "customers",
+        icon: Contact,
+        menuKey: "customers",
+      },
+      {
+        href: "/admin/promotions",
+        labelKey: "promotions",
+        icon: BadgePercent,
+        menuKey: "promotions",
+      },
+      {
+        href: "/admin/inventory",
+        labelKey: "inventory",
+        icon: PackageSearch,
+        menuKey: "inventory",
+      },
+      {
+        href: "/admin/transfers",
+        labelKey: "stockTransfers",
+        icon: ArrowRightLeft,
+        menuKey: "inventory",
+      },
+      {
+        href: "/admin/stock-opname",
+        labelKey: "stockOpname",
+        icon: ClipboardList,
+        menuKey: "stockOpname",
+      },
+      {
+        href: "/admin/suppliers",
+        labelKey: "suppliers",
+        icon: Truck,
+        menuKey: "suppliers",
+      },
+      {
+        href: "/admin/purchases",
+        labelKey: "purchases",
+        icon: ShoppingBag,
+        menuKey: "purchases",
+      },
+      {
+        href: "/admin/users",
+        labelKey: "usersCashiers",
+        icon: Users,
+        menuKey: "users",
+      },
     ],
   },
   {
     labelKey: "menuGroupMonitoring",
     items: [
-      { href: "/admin/reports", labelKey: "reports", icon: BarChart3, menuKey: "reports" },
-      { href: "/admin/financial-reports", labelKey: "financialReports", icon: FileSpreadsheet, menuKey: "financialReports" },
+      {
+        href: "/admin/reports",
+        labelKey: "reports",
+        icon: BarChart3,
+        menuKey: "reports",
+      },
+      {
+        href: "/admin/financial-reports",
+        labelKey: "financialReports",
+        icon: FileSpreadsheet,
+        menuKey: "financialReports",
+      },
     ],
   },
   {
     labelKey: "menuGroupSettings",
     items: [
-      { href: "/admin/receipt", labelKey: "receipt", icon: ReceiptText, menuKey: "receipt" },
-      { href: "/admin/role-access", labelKey: "roleAccess", icon: Settings2, menuKey: "roleAccess" },
-      { href: "/admin/profile", labelKey: "profile", icon: UserCircle, menuKey: "profile" },
+      {
+        href: "/admin/receipt",
+        labelKey: "receipt",
+        icon: ReceiptText,
+        menuKey: "receipt",
+      },
+      {
+        href: "/admin/role-access",
+        labelKey: "roleAccess",
+        icon: Settings2,
+        menuKey: "roleAccess",
+      },
+      {
+        href: "/admin/profile",
+        labelKey: "profile",
+        icon: UserCircle,
+        menuKey: "profile",
+      },
     ],
   },
 ];
@@ -138,6 +250,7 @@ export function AdminNav() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [canSelectAllOutlets, setCanSelectAllOutlets] = useState(false);
+  const [profileRole, setProfileRole] = useState<string | null>(null);
   const [visibleMenuKeys, setVisibleMenuKeys] = useState<Set<MenuKey>>(
     initialVisibleMenuKeys,
   );
@@ -201,6 +314,7 @@ export function AdminNav() {
           const nextKeys = visibleMenuKeysFrom(access.permissions);
           setVisibleMenuKeys(nextKeys);
           cacheMenuKeys(nextKeys);
+          setProfileRole(profile.role);
           const nextCanSelectAll = ["owner", "auditor"].includes(profile.role);
           setOutlets(nextOutlets);
           setCanSelectAllOutlets(nextCanSelectAll);
@@ -209,7 +323,9 @@ export function AdminNav() {
               ? nextCanSelectAll
               : nextOutlets.some((outlet) => outlet.id === selectedOutletId);
           if (!hasSelectedOutlet) {
-            setSelectedOutletId(nextCanSelectAll ? allOutletsValue : (nextOutlets[0]?.id ?? ""));
+            setSelectedOutletId(
+              nextCanSelectAll ? allOutletsValue : (nextOutlets[0]?.id ?? ""),
+            );
           }
         }
       } catch {
@@ -259,7 +375,7 @@ export function AdminNav() {
               <Menu className="h-5 w-5" />
             </button>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-primary">POS Cemilan</p>
+              <p className="text-sm font-semibold text-primary">POS ERP</p>
               <h1 className="truncate text-lg font-semibold">
                 {t("backendDashboard")}
               </h1>
@@ -282,9 +398,7 @@ export function AdminNav() {
 
       <div
         className={`fixed inset-0 z-40 bg-black/45 transition-opacity lg:hidden ${
-          isMobileSidebarOpen
-            ? "opacity-100"
-            : "pointer-events-none opacity-0"
+          isMobileSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={() => setIsMobileSidebarOpen(false)}
         aria-hidden="true"
@@ -322,6 +436,9 @@ export function AdminNav() {
           onSelectedOutletChange={setSelectedOutletId}
         />
       </aside>
+      {/* <AiChatWidget
+        enabled={["owner", "admin_outlet"].includes(profileRole ?? "")}
+      /> */}
     </>
   );
 }
@@ -381,7 +498,7 @@ function AdminSidebarContent(props: {
             <ReceiptText className="h-6 w-6" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-[#A8DADC]">POS Cemilan</p>
+            <p className="text-sm font-medium text-[#A8DADC]">POS ERP</p>
             <h1 className="truncate text-xl font-semibold">
               {t("adminConsole")}
             </h1>
@@ -401,24 +518,31 @@ function AdminSidebarContent(props: {
           <label className="text-xs font-semibold uppercase text-[#A8DADC]">
             {t("activeOutlet")}
           </label>
-          <select
-            className="h-10 w-full rounded-md border border-white/15 bg-white/10 px-3 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-white [&_option]:text-foreground"
+          <SearchableSelect
             value={props.selectedOutletId}
-            onChange={(event) => props.onSelectedOutletChange(event.target.value)}
-          >
-            {props.canSelectAllOutlets ? <option value={allOutletsValue}>{t("allOutlets")}</option> : null}
-            {props.outlets.map((outlet) => (
-              <option key={outlet.id} value={outlet.id}>
-                {outlet.name} ({outlet.code})
-              </option>
-            ))}
-          </select>
+            onChange={props.onSelectedOutletChange}
+            placeholder={t("activeOutlet")}
+            searchPlaceholder="Cari outlet..."
+            emptyText="Outlet tidak ditemukan."
+            triggerClassName="border-white/15 bg-white/10 text-white hover:bg-white/15 [&_svg]:text-white/80"
+            dropdownClassName="bg-white text-[#1D3557]"
+            options={[
+              ...(props.canSelectAllOutlets
+                ? [{ value: allOutletsValue, label: t("allOutlets") }]
+                : []),
+              ...props.outlets.map((outlet) => ({
+                value: outlet.id,
+                label: `${outlet.name} (${outlet.code})`,
+                keywords: `${outlet.name} ${outlet.code}`,
+              })),
+            ]}
+          />
         </div>
       </div>
 
       <nav
         ref={navRef}
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [scrollbar-color:transparent_transparent] [scrollbar-width:none] hover:[scrollbar-color:rgba(255,255,255,0.22)_transparent] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent"
       >
         <div className="flex min-h-full flex-col gap-5">
           <div className="space-y-5">
@@ -451,7 +575,7 @@ function AdminSidebarContent(props: {
       <div className="m-3 shrink-0 rounded-lg border border-white/10 bg-white/10 p-3">
         <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[#A8DADC]">
           <ShieldCheck className="h-4 w-4" />
-          Session
+          Sesi
         </div>
         <button
           type="button"
@@ -514,7 +638,7 @@ function NavGroupSection(props: {
                   ? "bg-[#E63946] text-white shadow-sm"
                   : pressed
                     ? "bg-white/15 text-white shadow-sm"
-                  : "text-[#F1FAEE]/85 hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                    : "text-[#F1FAEE]/85 hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               }`}
             >
               <item.icon className="h-4 w-4" />

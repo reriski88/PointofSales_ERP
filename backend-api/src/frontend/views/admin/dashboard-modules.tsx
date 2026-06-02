@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { BarChart3, Boxes, Building2, Calculator, FileSpreadsheet, PackageSearch, Users } from "lucide-react";
+import { ArrowRightLeft, BarChart3, Boxes, Building2, Calculator, ClipboardList, Contact, FileSpreadsheet, PackageSearch, ShoppingBag, Truck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRolePermissions } from "./_components/use-role-permissions";
 import type { RoleAccessMenuKey } from "@/lib/role-access";
 
 type DashboardModuleKey = Extract<
   RoleAccessMenuKey,
-  "cashier" | "outlets" | "users" | "products" | "inventory" | "reports" | "financialReports"
+  "cashier" | "outlets" | "users" | "products" | "customers" | "inventory" | "stockOpname" | "suppliers" | "purchases" | "reports" | "financialReports"
 >;
 
 const modules: Array<{
@@ -21,7 +21,7 @@ const modules: Array<{
   {
     href: "/admin/cashier",
     title: "Kasir",
-    text: "Buka shift, transaksi penjualan, input remahan, sync offline, dan lihat laporan harian.",
+    text: "Buka shift, transaksi penjualan, input remahan, sinkronisasi offline, dan lihat laporan harian.",
     icon: Calculator,
     menuKey: "cashier",
   },
@@ -47,16 +47,51 @@ const modules: Array<{
     menuKey: "products",
   },
   {
+    href: "/admin/customers",
+    title: "Pelanggan",
+    text: "Kelola pelanggan, loyalty, histori belanja, dan piutang.",
+    icon: Contact,
+    menuKey: "customers",
+  },
+  {
     href: "/admin/inventory",
-    title: "Inventory",
+    title: "Persediaan",
     text: "Monitoring stok produk masing-masing outlet dan mutasi terakhir.",
     icon: PackageSearch,
     menuKey: "inventory",
   },
   {
+    href: "/admin/transfers",
+    title: "Transfer Barang",
+    text: "Pindahkan stok antar outlet sesuai akses outlet user login.",
+    icon: ArrowRightLeft,
+    menuKey: "inventory",
+  },
+  {
+    href: "/admin/stock-opname",
+    title: "Stock Opname",
+    text: "Generate daftar hitung, input stok fisik, approve selisih, dan posting adjustment.",
+    icon: ClipboardList,
+    menuKey: "stockOpname",
+  },
+  {
+    href: "/admin/suppliers",
+    title: "Supplier",
+    text: "Kelola data pemasok, kode supplier, kontak, alamat, dan status aktif.",
+    icon: Truck,
+    menuKey: "suppliers",
+  },
+  {
+    href: "/admin/purchases",
+    title: "Pembelian",
+    text: "Buat pesanan pembelian, terima stok, dan catat pembayaran supplier.",
+    icon: ShoppingBag,
+    menuKey: "purchases",
+  },
+  {
     href: "/admin/reports",
     title: "Laporan",
-    text: "Lihat sales, inventory, gross profit, dan remahan/waste.",
+    text: "Lihat penjualan, persediaan, laba kotor, dan remahan/rusak.",
     icon: BarChart3,
     menuKey: "reports",
   },
@@ -75,7 +110,11 @@ export function DashboardModules() {
   const outlets = useRolePermissions("outlets");
   const users = useRolePermissions("users");
   const products = useRolePermissions("products");
+  const customers = useRolePermissions("customers");
   const inventory = useRolePermissions("inventory");
+  const stockOpname = useRolePermissions("stockOpname");
+  const suppliers = useRolePermissions("suppliers");
+  const purchases = useRolePermissions("purchases");
   const reports = useRolePermissions("reports");
   const financialReports = useRolePermissions("financialReports");
   const accessByMenu = {
@@ -83,7 +122,11 @@ export function DashboardModules() {
     outlets,
     users,
     products,
+    customers,
     inventory,
+    stockOpname,
+    suppliers,
+    purchases,
     reports,
     financialReports,
   } satisfies Record<DashboardModuleKey, { canView: boolean }>;

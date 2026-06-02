@@ -26,7 +26,7 @@ export function PaginationControls(props: {
           value={props.pageSize}
           onChange={(event) => props.onPageSizeChange(Number(event.target.value))}
         >
-          {[10, 20, 50, 100].map((value) => (
+          {[5, 10, 20, 50, 100].map((value) => (
             <option key={value} value={value}>
               {value} / halaman
             </option>
