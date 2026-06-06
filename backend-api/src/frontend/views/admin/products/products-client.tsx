@@ -28,6 +28,7 @@ type Unit = {
 };
 
 type UnitKind = "weight" | "count" | "package";
+type ProductCreateTemplate = "pack_weight" | "weight" | "count" | "non_stock";
 
 type Outlet = {
   id: string;
@@ -145,6 +146,7 @@ export function ProductsClient() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [form, setForm] = useState(initialForm);
+  const [createTemplate, setCreateTemplate] = useState<ProductCreateTemplate>("pack_weight");
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [editingVariant, setEditingVariant] = useState<{ product: Product; sku: EditSkuForm } | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -256,8 +258,16 @@ export function ProductsClient() {
     () => unitOptionsForKind(units, form.productType),
     [form.productType, units],
   );
+  const createBaseUnitOptions = useMemo(
+    () => unitOptionsForKind(units, createTemplate === "pack_weight" ? "weight" : form.productType, [form.baseUnitId]),
+    [createTemplate, form.baseUnitId, form.productType, units],
+  );
+  const createSaleUnitOptions = useMemo(
+    () => unitOptionsForKind(units, createTemplate === "pack_weight" ? "package" : form.productType, [form.saleUnitId]),
+    [createTemplate, form.productType, form.saleUnitId, units],
+  );
   const hasAnyUnit = units.length > 0;
-  const hasSelectableUnit = createUnitOptions.length > 0;
+  const hasSelectableUnit = createBaseUnitOptions.length > 0 && createSaleUnitOptions.length > 0;
   const hasUnitSelection =
     hasSelectableUnit && Boolean(form.baseUnitId && form.saleUnitId);
   const canSubmitProduct =
@@ -267,6 +277,54 @@ export function ProductsClient() {
     hasOutletReady &&
     selectedOutletId !== allOutletsValue &&
     hasUnitSelection;
+
+  function applyCreateTemplate(template: ProductCreateTemplate) {
+    setCreateTemplate(template);
+    setForm((current) => {
+      const next = { ...current };
+      if (template === "pack_weight") {
+        const baseUnitId = preferredUnitId(units, "weight", ["g", "gr", "gram"]) || next.baseUnitId;
+        const saleUnitId = preferredUnitId(units, "package", ["pack", "pak", "pouch"]) || next.saleUnitId;
+        next.productType = "package";
+        next.baseUnitId = baseUnitId;
+        next.saleUnitId = saleUnitId;
+        next.saleUnitToBaseFactor = next.saleUnitToBaseFactor === "1" ? "250" : next.saleUnitToBaseFactor;
+        next.trackInventory = true;
+        next.quantityMode = "required";
+        next.skuName = next.skuName || (next.name ? `${next.name} 250g` : "");
+      }
+      if (template === "weight") {
+        const baseUnitId = preferredUnitId(units, "weight", ["g", "gr", "gram"]) || next.baseUnitId;
+        const saleUnitId = preferredUnitId(units, "weight", ["kg", "kilo", "kilogram"]) || baseUnitId;
+        next.productType = "weight";
+        next.baseUnitId = baseUnitId;
+        next.saleUnitId = saleUnitId;
+        next.saleUnitToBaseFactor = conversionInput(units, baseUnitId, saleUnitId);
+        next.trackInventory = true;
+        next.quantityMode = "required";
+      }
+      if (template === "count") {
+        const unitId = preferredUnitId(units, "count", ["pcs", "pc", "buah"]) || next.baseUnitId;
+        next.productType = "count";
+        next.baseUnitId = unitId;
+        next.saleUnitId = unitId;
+        next.saleUnitToBaseFactor = "1";
+        next.trackInventory = true;
+        next.quantityMode = "required";
+      }
+      if (template === "non_stock") {
+        const unitId = preferredUnitId(units, "count", ["pcs", "pc", "buah"]) || preferredUnitId(units, "package", ["pack", "pak"]) || next.baseUnitId;
+        next.productType = unitKindForUnit(units, unitId) ?? "count";
+        next.baseUnitId = unitId;
+        next.saleUnitId = unitId;
+        next.saleUnitToBaseFactor = "1";
+        next.trackInventory = false;
+        next.quantityMode = "required";
+        next.minStockBaseQty = "0";
+      }
+      return next;
+    });
+  }
 
   async function loadOutlets() {
     try {
@@ -370,7 +428,14 @@ export function ProductsClient() {
     setProducts(productJson.data);
     setForm((current) => ({
       ...current,
-      ...normalizeUnitSelection(unitData, current),
+      ...(current.baseUnitId || current.saleUnitId
+        ? normalizeUnitSelection(unitData, current)
+        : {
+            productType: "package" as UnitKind,
+            baseUnitId: preferredUnitId(unitData, "weight", ["g", "gr", "gram"]),
+            saleUnitId: preferredUnitId(unitData, "package", ["pack", "pak", "pouch"]),
+            saleUnitToBaseFactor: "250",
+          }),
     }));
     setIsLoading(false);
   }
@@ -751,9 +816,19 @@ export function ProductsClient() {
               <ProductCreatePreview form={form} saleUnitCode={unitCode(form.saleUnitId)} baseUnitCode={unitCode(form.baseUnitId)} />
               <div className="space-y-4">
                 <div className="rounded-xl border bg-background p-4">
+                  <FormSectionHeading icon={Ruler} title="Pilih Cara Jual" />
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <ProductTemplateButton active={createTemplate === "pack_weight"} title="Kemasan Berat" description="Keripik 250g dijual per pack" onClick={() => applyCreateTemplate("pack_weight")} />
+                    <ProductTemplateButton active={createTemplate === "weight"} title="Berat Curah" description="Gula dijual per kg atau ons" onClick={() => applyCreateTemplate("weight")} />
+                    <ProductTemplateButton active={createTemplate === "count"} title="Pcs / Satuan" description="Roti dijual per pcs" onClick={() => applyCreateTemplate("count")} />
+                    <ProductTemplateButton active={createTemplate === "non_stock"} title="Non-stok" description="Jasa atau biaya tambahan" onClick={() => applyCreateTemplate("non_stock")} />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border bg-background p-4">
                   <FormSectionHeading icon={Building2} title="Identitas Produk" />
                   <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <Field label="Nama Produk" value={form.name} placeholder="Contoh: Keripik Pisang" onChange={(value) => setForm({ ...form, name: value })} />
+                    <Field label="Nama Produk" value={form.name} placeholder="Contoh: Keripik Pisang" helperText="Nama induk produk. Ukuran kemasan masuk ke nama varian." onChange={(value) => setForm({ ...form, name: value })} />
                     <CategoryField
                       id="product-category"
                       label="Kategori"
@@ -761,7 +836,7 @@ export function ProductsClient() {
                       categories={categories}
                       onChange={(value) => setForm({ ...form, category: value })}
                     />
-                    <Field label="Nama Varian Awal" value={form.skuName} placeholder={form.name || "Sama dengan nama produk"} onChange={(value) => setForm({ ...form, skuName: value })} />
+                    <Field label="Nama Varian Awal" value={form.skuName} placeholder={form.name ? `${form.name} 250g` : "Contoh: Keripik Pisang 250g"} helperText="Contoh: 250g, 500g, original, pedas. Struk memakai nama ini + satuan jual." onChange={(value) => setForm({ ...form, skuName: value })} />
                     <Field label="Barcode" value={form.barcode} placeholder="Opsional, isi bila ada barcode fisik" onChange={(value) => setForm({ ...form, barcode: value })} />
                   </div>
                 </div>
@@ -793,8 +868,8 @@ export function ProductsClient() {
                 </div>
 
                 <div className="rounded-xl border bg-background p-4">
-                  <FormSectionHeading icon={Ruler} title="Satuan & Stok" />
-                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <FormSectionHeading icon={Ruler} title="Satuan, Kemasan, dan Stok" />
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4 xl:items-start">
                 <SelectField
                   label="Tipe Jual"
                   value={form.productType}
@@ -813,41 +888,44 @@ export function ProductsClient() {
                   }}
                 />
                 <SelectField
-                  label="Satuan Stok"
+                  label="Satuan dasar stok"
                   value={form.baseUnitId}
-                  options={createUnitOptions}
+                  options={createBaseUnitOptions}
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
                       baseUnitId: value,
-                      saleUnitToBaseFactor: conversionInput(units, value, current.saleUnitId),
+                      saleUnitToBaseFactor: createTemplate === "pack_weight" ? current.saleUnitToBaseFactor : conversionInput(units, value, current.saleUnitId),
                     }))
                   }
                 />
                 <SelectField
-                  label="Satuan Jual Kasir"
+                  label="Satuan jual"
                   value={form.saleUnitId}
-                  options={createUnitOptions}
+                  options={createSaleUnitOptions}
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
                       saleUnitId: value,
-                      saleUnitToBaseFactor: conversionInput(units, current.baseUnitId, value),
+                      saleUnitToBaseFactor: createTemplate === "pack_weight" ? current.saleUnitToBaseFactor : conversionInput(units, current.baseUnitId, value),
                     }))
                   }
                 />
                 <Field
-                  label="Konversi ke Dasar"
+                  label={createTemplate === "pack_weight" ? `Isi per ${unitCode(form.saleUnitId)}` : "Konversi stok"}
                   numeric
-                  readOnly
                   value={form.saleUnitToBaseFactor}
+                  helperText={createTemplate === "pack_weight" ? `Contoh: 250 berarti 1 ${unitCode(form.saleUnitId)} berisi 250 ${unitCode(form.baseUnitId)}.` : undefined}
                   onChange={(value) => setForm({ ...form, saleUnitToBaseFactor: value })}
                 />
-                <div className="rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground xl:col-span-4">
-                  <span className="font-medium text-foreground">Kode struk: </span>
-                  {unitCode(form.saleUnitId)}. {unitKindDescription(form.productType)}
+                <div className="rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground md:col-span-2 xl:col-span-4">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <UnitSummaryTile label="Tampil struk" value={`${displayVariantName(form)} - ${unitCode(form.saleUnitId)}`} />
+                    <UnitSummaryTile label="Potong stok" value={form.trackInventory ? conversionSummary(form.saleUnitToBaseFactor, unitCode(form.baseUnitId), unitCode(form.saleUnitId)) : "Tidak potong stok"} />
+                    <UnitSummaryTile label="Tipe" value={unitKindDescription(form.productType)} />
+                  </div>
                 </div>
-                <label className="flex items-start gap-3 rounded-lg border bg-[#F6FBF8] px-3 py-3 text-sm xl:col-span-4">
+                <label className="flex items-start gap-3 rounded-lg border bg-[#F6FBF8] px-3 py-3 text-sm md:col-span-2 xl:col-span-4">
                   <input
                     type="checkbox"
                     className="mt-1 h-4 w-4 accent-primary"
@@ -1162,7 +1240,7 @@ export function ProductsClient() {
                       <span className="rounded-md border bg-background px-2 py-1 text-muted-foreground">SKU {editingVariant.sku.sku || "-"}</span>
                       <span className="rounded-md border bg-background px-2 py-1 text-muted-foreground">{unitCode(editingVariant.sku.saleUnitId)}</span>
                     </div>
-                    <p className="text-base font-bold text-foreground">{rupiah(editingVariant.sku.price || "0")}</p>
+                    <p className="text-base font-bold text-foreground">{rupiah(parseIndonesianNumber(editingVariant.sku.price || "0"))}</p>
                   </div>
                 </div>
                 <ProductImageField
@@ -1181,10 +1259,10 @@ export function ProductsClient() {
                 <section className="rounded-lg border bg-background p-4">
                   <div className="mb-4 flex flex-col gap-1">
                     <h3 className="text-sm font-semibold text-foreground">Identitas Varian</h3>
-                    <p className="text-xs text-muted-foreground">Nama dan kode untuk kasir, pencarian, barcode, dan audit stok.</p>
+                    <p className="text-xs text-muted-foreground">Ukuran kemasan ditulis di nama varian; satuan tetap memakai kode seperti pack, g, ons, kg.</p>
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
-                    <Field label="Nama Varian" value={editingVariant.sku.name} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, name: value } })} />
+                    <Field label="Nama Varian" value={editingVariant.sku.name} placeholder={`${editingVariant.product.name} 250g`} helperText="Contoh: 250g, 500g, original, pedas. Struk memakai nama ini + satuan jual." onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, name: value } })} />
                     <CodeInput label="Kode SKU" value={editingVariant.sku.sku} prefix="PRD" showRandomButton={Boolean(editingVariant.sku.isNew)} helperText="Kode internal untuk kasir, laporan, dan pencarian." onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, sku: value } })} />
                     <Field label="Barcode" value={editingVariant.sku.barcode ?? ""} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, barcode: value } })} />
                     <SelectField label="Tipe Jual" value={editingVariant.sku.productType} options={productTypeOptions} onChange={(value) => {
@@ -1197,16 +1275,23 @@ export function ProductsClient() {
 
                 <section className="rounded-lg border bg-background p-4">
                   <div className="mb-4 flex flex-col gap-1">
-                    <h3 className="text-sm font-semibold text-foreground">Harga dan Satuan</h3>
-                    <p className="text-xs text-muted-foreground">Satuan stok adalah unit audit persediaan; satuan jual muncul di kasir.</p>
+                    <h3 className="text-sm font-semibold text-foreground">Harga, Satuan, dan Konversi Stok</h3>
+                    <p className="text-xs text-muted-foreground">Pack 250g dan 500g tetap tampil pack; ukuran dibedakan dari nama varian.</p>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 xl:items-start">
                     <Field label="Harga Jual" numeric value={editingVariant.sku.price} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, price: value } })} />
                     <Field label="HPP" numeric value={editingVariant.sku.cost} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, cost: value } })} />
                     <Field label={`Stok Minimum (${unitCode(editingVariant.sku.baseUnitId)})`} numeric readOnly={!editingVariant.sku.trackInventory} value={editingVariant.sku.trackInventory ? editingVariant.sku.minStockBaseQty : "0"} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, minStockBaseQty: value } })} />
-                    <SelectField label="Satuan Stok" value={editingVariant.sku.baseUnitId} options={unitOptionsForKind(units, editingVariant.sku.productType, [editingVariant.sku.baseUnitId])} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, baseUnitId: value, saleUnitToBaseFactor: conversionInput(units, value, editingVariant.sku.saleUnitId) } })} />
-                    <SelectField label="Satuan Jual Kasir" value={editingVariant.sku.saleUnitId} options={unitOptionsForKind(units, editingVariant.sku.productType, [editingVariant.sku.saleUnitId])} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, saleUnitId: value, saleUnitToBaseFactor: conversionInput(units, editingVariant.sku.baseUnitId, value) } })} />
+                    <SelectField label="Satuan dasar stok" value={editingVariant.sku.baseUnitId} options={unitOptionsForKind(units, editingVariant.sku.productType, [editingVariant.sku.baseUnitId])} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, baseUnitId: value, saleUnitToBaseFactor: conversionInput(units, value, editingVariant.sku.saleUnitId) } })} />
+                    <SelectField label="Satuan jual" value={editingVariant.sku.saleUnitId} options={unitOptionsForKind(units, editingVariant.sku.productType, [editingVariant.sku.saleUnitId])} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, saleUnitId: value, saleUnitToBaseFactor: conversionInput(units, editingVariant.sku.baseUnitId, value) } })} />
                     <Field label="Konversi ke Stok" numeric value={editingVariant.sku.saleUnitToBaseFactor} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, saleUnitToBaseFactor: value } })} />
+                    <div className="rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground xl:col-span-3">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <UnitSummaryTile label="Tampil struk" value={`${editingVariant.sku.name || editingVariant.product.name} - ${unitCode(editingVariant.sku.saleUnitId)}`} />
+                        <UnitSummaryTile label="Potong stok" value={editingVariant.sku.trackInventory ? conversionSummary(editingVariant.sku.saleUnitToBaseFactor, unitCode(editingVariant.sku.baseUnitId), unitCode(editingVariant.sku.saleUnitId)) : "Tidak potong stok"} />
+                        <UnitSummaryTile label="Tipe" value={unitKindDescription(editingVariant.sku.productType)} />
+                      </div>
+                    </div>
                     <label className="flex items-start gap-3 rounded-lg border bg-[#F6FBF8] px-3 py-3 text-sm xl:col-span-3">
                       <input
                         type="checkbox"
@@ -1281,16 +1366,17 @@ function ProductThumb(props: { imageUrl?: string | null; name: string }) {
 
 function ProductCreatePreview(props: { form: typeof initialForm; saleUnitCode: string; baseUnitCode: string }) {
   const productName = props.form.name.trim() || "Nama produk";
-  const variantName = props.form.skuName.trim() || productName;
+  const variantName = displayVariantName(props.form);
   const category = props.form.category.trim() || "Tanpa kategori";
   const imageUrl = props.form.imageUrl || props.form.skuImageUrl;
   const skuCode = props.form.sku.trim().toUpperCase() || "Auto";
   const saleUnitCode = props.saleUnitCode || "unit";
   const baseUnitCode = props.baseUnitCode || "unit";
+  const price = parseIndonesianNumber(props.form.price || "0");
 
   return (
-    <aside className="h-fit rounded-xl border bg-[#F6FBF8] p-4 lg:sticky lg:top-4">
-      <div className="overflow-hidden rounded-xl border bg-background">
+    <aside className="h-fit rounded-xl border bg-[#F6FBF8] p-4 shadow-sm lg:sticky lg:top-4">
+      <div className="overflow-hidden rounded-xl border bg-background shadow-sm">
         {imageUrl ? (
           <Image src={imageUrl} alt={`Preview ${productName}`} width={480} height={360} unoptimized className="aspect-[4/3] w-full object-cover" />
         ) : (
@@ -1310,19 +1396,40 @@ function ProductCreatePreview(props: { form: typeof initialForm; saleUnitCode: s
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-lg border bg-background p-3">
               <p className="text-xs text-muted-foreground">Harga</p>
-              <p className="mt-1 font-semibold">{rupiah(parseIndonesianNumber(props.form.price || "0"))}</p>
+              <p className="mt-1 font-semibold">{rupiah(price)}</p>
             </div>
             <div className="rounded-lg border bg-background p-3">
               <p className="text-xs text-muted-foreground">Satuan jual</p>
               <p className="mt-1 font-semibold">{saleUnitCode}</p>
             </div>
           </div>
+          <div className="rounded-lg border border-dashed bg-[#F9FAFB] p-3 font-mono text-xs text-slate-700">
+            <div className="mb-2 text-center font-semibold text-slate-900">PREVIEW STRUK</div>
+            <div className="border-t border-dashed pt-2">
+              <p className="break-words">{variantName}</p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span>1 {saleUnitCode} x {rupiah(price)}</span>
+                <span>{rupiah(price)}</span>
+              </div>
+            </div>
+          </div>
           <p className="text-xs leading-5 text-muted-foreground">
-            Stok minimum {props.form.minStockBaseQty || "0"} {baseUnitCode}. Preview mengikuti data form saat ini.
+            {props.form.trackInventory
+              ? conversionSummary(props.form.saleUnitToBaseFactor, baseUnitCode, saleUnitCode)
+              : "Produk non-stok tidak memotong inventory."}
           </p>
         </div>
       </div>
     </aside>
+  );
+}
+
+function UnitSummaryTile(props: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border bg-[#F6FBF8] px-3 py-2">
+      <p className="truncate text-xs font-medium text-[#1D3557]/70">{props.label}</p>
+      <p className="mt-1 break-words text-sm font-semibold text-[#1D3557]">{props.value}</p>
+    </div>
   );
 }
 
@@ -1472,6 +1579,26 @@ function ProductNote(props: {
   );
 }
 
+function ProductTemplateButton(props: {
+  active: boolean;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={`min-h-[92px] rounded-lg border px-3 py-3 text-left transition hover:border-primary/60 hover:bg-primary/5 ${
+        props.active ? "border-primary bg-primary/10 text-primary shadow-sm" : "bg-background text-foreground"
+      }`}
+    >
+      <span className="block text-sm font-semibold">{props.title}</span>
+      <span className="mt-1 block text-xs leading-5 text-muted-foreground">{props.description}</span>
+    </button>
+  );
+}
+
 function ProductSetupNotice(props: {
   icon: ComponentType<{ className?: string }>;
   title: string;
@@ -1514,11 +1641,12 @@ function Field(props: {
   numeric?: boolean;
   readOnly?: boolean;
   placeholder?: string;
+  helperText?: string;
   onChange: (value: string) => void;
 }) {
   return (
     <div className="space-y-2">
-      <Label>{props.label}</Label>
+      <Label className="flex min-h-5 items-end leading-5">{props.label}</Label>
       <Input
         type={props.type ?? "text"}
         inputMode={props.numeric ? "decimal" : undefined}
@@ -1535,6 +1663,7 @@ function Field(props: {
           )
         }
       />
+      {props.helperText ? <p className="text-xs leading-5 text-muted-foreground">{props.helperText}</p> : null}
     </div>
   );
 }
@@ -1560,7 +1689,7 @@ function CategoryField(props: {
 }) {
   return (
     <div className="space-y-2">
-      <Label>{props.label}</Label>
+      <Label className="flex min-h-5 items-end leading-5">{props.label}</Label>
       <Input
         list={`${props.id}-options`}
         value={props.value}
@@ -1584,7 +1713,7 @@ function SelectField(props: {
 }) {
   return (
     <div className="space-y-2">
-      <Label>{props.label}</Label>
+      <Label className="flex min-h-5 items-end leading-5">{props.label}</Label>
       <SearchableSelect
         value={props.value}
         onChange={props.onChange}
@@ -1626,6 +1755,12 @@ function unitOptionsForKind(units: Unit[], kind: UnitKind, includeUnitIds: strin
 
 function unitKindForUnit(units: Unit[], unitId: string) {
   return units.find((unit) => unit.id === unitId)?.kind;
+}
+
+function preferredUnitId(units: Unit[], kind: UnitKind, preferredCodes: string[]) {
+  const activeUnits = units.filter((unit) => unit.isActive && unit.kind === kind);
+  const preferred = activeUnits.find((unit) => preferredCodes.includes(unit.code.trim().toLowerCase()));
+  return preferred?.id ?? activeUnits[0]?.id ?? "";
 }
 
 function normalizeUnitSelection<T extends { productType: UnitKind; baseUnitId: string; saleUnitId: string }>(
@@ -1671,6 +1806,16 @@ function conversionInput(units: Unit[], baseUnitId: string, saleUnitId: string) 
     minimumFractionDigits: 0,
     maximumFractionDigits: 6,
   });
+}
+
+function displayVariantName(form: typeof initialForm) {
+  return form.skuName.trim() || form.name.trim() || "Nama varian";
+}
+
+function conversionSummary(factorInput: string, baseUnitCode: string, saleUnitCode: string) {
+  const factor = parseIndonesianNumber(factorInput || "1");
+  const safeFactor = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  return `1 ${saleUnitCode || "unit"} = ${safeFactor.toLocaleString("id-ID", { maximumFractionDigits: 6 })} ${baseUnitCode || "unit"}`;
 }
 
 function parseIndonesianNumber(value: string) {

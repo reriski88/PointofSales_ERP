@@ -1,6 +1,6 @@
-# POS Cemilan Backend
+# Smart POS Backend
 
-Backend API untuk POS Jualan Cemilan. Backend berjalan di PC lokal, memakai Next.js Route Handlers, PostgreSQL, Drizzle ORM, Better Auth, Tailwind CSS, dan komponen UI bergaya shadcn.
+Backend API untuk Smart POS. Backend berjalan di PC lokal, memakai Next.js Route Handlers, PostgreSQL, Drizzle ORM, Better Auth, Tailwind CSS, dan komponen UI bergaya shadcn.
 
 ## Setup Lokal
 
@@ -81,6 +81,54 @@ Halaman dashboard:
 - `/admin/reports` laporan sales, inventory, dan waste/remahan.
 
 Produk dibuat dari dashboard backend. APK kasir fokus untuk transaksi, shift, sync offline, dan operasional kasir.
+
+## Produk, Varian, dan Satuan
+
+Halaman `/admin/products` memakai alur ramah pemula. Admin memilih template cara jual sebelum mengisi produk:
+
+- **Kemasan Berat** untuk produk seperti keripik 250g/500g yang dijual per pack.
+- **Berat Curah** untuk produk yang dijual per gram, ons, atau kilogram.
+- **Pcs / Satuan** untuk produk yang dijual per buah/pcs.
+- **Non-stok** untuk jasa, biaya tambahan, atau item yang tidak perlu inventory.
+
+Prinsip satuan:
+
+- `unit.code` adalah kode pendek untuk kasir, struk, dan laporan, misalnya `g`, `ons`, `kg`, `pcs`, `pack`.
+- `unit.toBaseFactor` dipakai untuk konversi umum antar satuan yang nilainya tetap, misalnya `kg = 1000 g`.
+- Ukuran kemasan yang berbeda tidak dibuat sebagai master satuan. Gunakan nama SKU/varian dan `sku.saleUnitToBaseFactor`.
+
+Contoh kemasan berat:
+
+```text
+Product.name: Keripik Pisang
+SKU.name: Keripik Pisang 250g
+SKU.baseUnitId: g
+SKU.saleUnitId: pack
+SKU.saleUnitToBaseFactor: 250
+SKU.price: 15000
+```
+
+Kasir dan struk menampilkan nama SKU dan kode satuan jual:
+
+```text
+Keripik Pisang 250g
+1 pack x Rp15.000
+```
+
+Inventory tetap memakai satuan dasar:
+
+```text
+1 pack = 250 g
+```
+
+Untuk ukuran lain, buat SKU berbeda:
+
+```text
+Keripik Pisang 500g
+1 pack = 500 g
+```
+
+Dengan aturan ini, master satuan tetap bersih dan user awam cukup mengisi nama varian, satuan jual, dan isi per satuan jual.
 
 ## Endpoint Penting
 

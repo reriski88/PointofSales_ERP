@@ -1,6 +1,6 @@
-# pos_cemilan_kasir
+# smart_pos_kasir
 
-Flutter APK kasir untuk POS Cemilan.
+Flutter APK kasir untuk Smart POS.
 
 ## Backend API
 
