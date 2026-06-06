@@ -16,10 +16,8 @@ export function PaginationControls(props: {
   const end = Math.min(props.total, currentPage * props.pageSize);
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border bg-muted/25 p-3 text-sm md:flex-row md:items-center md:justify-between">
-      <p className="text-muted-foreground">
-        Menampilkan {start}-{end} dari {props.total} data
-      </p>
+    <div className="flex flex-col gap-3 rounded-lg border bg-card px-3 py-2 text-sm shadow-sm md:flex-row md:items-center md:justify-between">
+      <p className="text-muted-foreground">{start}-{end} / {props.total}</p>
       <div className="flex flex-wrap items-center gap-2">
         <select
           className="flex h-9 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -28,14 +26,14 @@ export function PaginationControls(props: {
         >
           {[5, 10, 20, 50, 100].map((value) => (
             <option key={value} value={value}>
-              {value} / halaman
+              {value}
             </option>
           ))}
         </select>
         <Button type="button" variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => props.onPageChange(currentPage - 1)}>
           <ChevronLeft className="h-4 w-4" />
         </Button>
-        <span className="min-w-20 text-center font-medium">
+        <span className="min-w-16 text-center font-medium">
           {currentPage} / {pageCount}
         </span>
         <Button

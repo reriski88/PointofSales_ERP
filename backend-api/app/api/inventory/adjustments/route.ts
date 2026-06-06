@@ -32,6 +32,9 @@ export async function POST(request: Request) {
     if (!result) {
       throw new ApiError("NOT_FOUND", "SKU not found", 404);
     }
+    if ("error" in result) {
+      throw new ApiError("CONFLICT", "Stok tidak cukup untuk adjustment negatif", 409);
+    }
 
     await writeAudit({
       actor,

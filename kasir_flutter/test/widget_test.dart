@@ -11,7 +11,7 @@ void main() {
     await tester.pumpWidget(const PosCemilanApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('POS ERP Kasir'), findsOneWidget);
+    expect(find.text('Smart POS ERP Kasir'), findsOneWidget);
     expect(find.text('Server API'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
@@ -29,7 +29,7 @@ void main() {
       await tester.pumpWidget(const PosCemilanApp());
       await tester.pumpAndSettle();
 
-      expect(find.text('POS ERP Kasir'), findsOneWidget);
+      expect(find.text('Smart POS ERP Kasir'), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
   });

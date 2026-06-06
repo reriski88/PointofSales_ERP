@@ -29,7 +29,7 @@ export function AiChatWidget({ enabled }: { enabled: boolean }) {
       id: "welcome",
       role: "assistant",
       content:
-        "Halo, saya bisa bantu menjawab data dan cara kerja aplikasi web POS ERP.",
+        "Halo, saya bisa bantu menjawab data dan cara kerja aplikasi web Smart POS ERP.",
     },
   ]);
   const [isSending, setIsSending] = useState(false);

@@ -8,7 +8,7 @@ class PosCemilanApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'POS ERP Kasir',
+      title: 'Smart POS ERP Kasir',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -55,6 +55,7 @@ class PosCemilanApp extends StatelessWidget {
         inputDecorationTheme: const InputDecorationTheme(
           filled: true,
           fillColor: AppPalette.white,
+          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.all(Radius.circular(8)),
           ),
@@ -63,6 +64,20 @@ class PosCemilanApp extends StatelessWidget {
             borderSide: BorderSide(color: AppPalette.line),
           ),
           isDense: true,
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: AppPalette.mist,
+          selectedColor: AppPalette.aqua,
+          side: const BorderSide(color: AppPalette.line),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        segmentedButtonTheme: SegmentedButtonThemeData(
+          style: ButtonStyle(
+            shape: WidgetStateProperty.all(
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(

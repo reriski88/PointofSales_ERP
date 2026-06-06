@@ -35,8 +35,18 @@ export async function GET(request: Request) {
         const keepAlive = setInterval(() => {
           controller.enqueue(encoder.encode(": keepalive\n\n"));
         }, 25_000);
+        const maxLifetime = setTimeout(() => {
+          send({
+            id: "reconnect",
+            type: "realtime.reconnect",
+            topics: [],
+            createdAt: new Date().toISOString(),
+          });
+          abort();
+        }, 240_000);
         const abort = () => {
           clearInterval(keepAlive);
+          clearTimeout(maxLifetime);
           unsubscribe();
           try {
             controller.close();

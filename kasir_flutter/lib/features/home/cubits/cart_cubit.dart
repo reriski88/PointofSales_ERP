@@ -111,13 +111,13 @@ class CartCubit extends Cubit<CartState> {
   }
 
   void newSession() {
-    final nextNumber = state.sessions.length + 1;
     final id = 'cart-${DateTime.now().microsecondsSinceEpoch}';
+    final normalized = _normalizeCartCustomerLabels(state.sessions);
     emit(
       state.copyWith(
         sessions: [
-          ...state.sessions,
-          CartSession.empty(id, 'Pelanggan $nextNumber'),
+          ...normalized,
+          CartSession.empty(id, 'Pelanggan ${normalized.length + 1}'),
         ],
         activeSessionId: id,
         message: 'Sesi transaksi baru dibuka.',
@@ -142,7 +142,9 @@ class CartCubit extends Cubit<CartState> {
     if (state.sessions.length <= 1) {
       emit(
         state.copyWith(
-          sessions: [_activeSessionWithLines(const [])],
+          sessions: _normalizeCartCustomerLabels([
+            _activeSessionWithLines(const []),
+          ]),
           message: 'Keranjang dikosongkan.',
           clearSaleQuote: true,
           clearSaleQuoteSignature: true,
@@ -153,10 +155,11 @@ class CartCubit extends Cubit<CartState> {
     final sessions = state.sessions
         .where((session) => session.id != state.activeSessionId)
         .toList();
+    final normalized = _normalizeCartCustomerLabels(sessions);
     emit(
       state.copyWith(
-        sessions: sessions,
-        activeSessionId: sessions.first.id,
+        sessions: normalized,
+        activeSessionId: normalized.first.id,
         message: 'Sesi transaksi ditutup.',
         clearSaleQuote: true,
         clearSaleQuoteSignature: true,
@@ -168,7 +171,9 @@ class CartCubit extends Cubit<CartState> {
     if (state.sessions.length <= 1) {
       emit(
         state.copyWith(
-          sessions: [_activeSessionWithLines(const [])],
+          sessions: _normalizeCartCustomerLabels([
+            _activeSessionWithLines(const []),
+          ]),
           clearSaleQuote: true,
           clearSaleQuoteSignature: true,
         ),
@@ -178,10 +183,11 @@ class CartCubit extends Cubit<CartState> {
     final sessions = state.sessions
         .where((session) => session.id != state.activeSessionId)
         .toList();
+    final normalized = _normalizeCartCustomerLabels(sessions);
     emit(
       state.copyWith(
-        sessions: sessions,
-        activeSessionId: sessions.first.id,
+        sessions: normalized,
+        activeSessionId: normalized.first.id,
         clearSaleQuote: true,
         clearSaleQuoteSignature: true,
       ),
@@ -285,6 +291,7 @@ class CartCubit extends Cubit<CartState> {
   Future<void> refreshSaleQuote({
     required PosApi api,
     required Outlet? outlet,
+    required String customerId,
     required double manualDiscount,
     required double manualTax,
     required double manualServiceCharge,
@@ -294,6 +301,7 @@ class CartCubit extends Cubit<CartState> {
   }) async {
     final signature = currentQuoteSignature(
       outlet: outlet,
+      customerId: customerId,
       manualDiscount: manualDiscount,
       manualTax: manualTax,
       manualServiceCharge: manualServiceCharge,
@@ -316,6 +324,7 @@ class CartCubit extends Cubit<CartState> {
       final quote = await api.quoteSale(
         buildQuotePayload(
           outlet: outlet,
+          customerId: customerId,
           manualDiscount: manualDiscount,
           manualTax: manualTax,
           manualServiceCharge: manualServiceCharge,
@@ -325,6 +334,7 @@ class CartCubit extends Cubit<CartState> {
       );
       final currentSignature = currentQuoteSignature(
         outlet: outlet,
+        customerId: customerId,
         manualDiscount: manualDiscount,
         manualTax: manualTax,
         manualServiceCharge: manualServiceCharge,
@@ -363,6 +373,7 @@ class CartCubit extends Cubit<CartState> {
 
   CartPricing pricing({
     required Outlet? outlet,
+    required String customerId,
     required double manualDiscountInput,
     required double manualTax,
     required double manualServiceCharge,
@@ -376,6 +387,7 @@ class CartCubit extends Cubit<CartState> {
     final manualDiscount = min(manualDiscountInput, subtotal);
     final quote = currentQuote(
       outlet: outlet,
+      customerId: customerId,
       manualDiscount: manualDiscount,
       manualTax: manualTax,
       manualServiceCharge: manualServiceCharge,
@@ -407,6 +419,7 @@ class CartCubit extends Cubit<CartState> {
 
   String? currentQuoteSignature({
     required Outlet? outlet,
+    required String customerId,
     required double manualDiscount,
     required double manualTax,
     required double manualServiceCharge,
@@ -418,6 +431,7 @@ class CartCubit extends Cubit<CartState> {
     }
     return jsonEncode({
       'outletId': outlet.id,
+      'customerId': customerId.trim(),
       'items': state.cart
           .map(
             (line) => {
@@ -439,6 +453,7 @@ class CartCubit extends Cubit<CartState> {
 
   SaleQuote? currentQuote({
     required Outlet? outlet,
+    required String customerId,
     required double manualDiscount,
     required double manualTax,
     required double manualServiceCharge,
@@ -447,6 +462,7 @@ class CartCubit extends Cubit<CartState> {
   }) {
     final signature = currentQuoteSignature(
       outlet: outlet,
+      customerId: customerId,
       manualDiscount: manualDiscount,
       manualTax: manualTax,
       manualServiceCharge: manualServiceCharge,
@@ -461,6 +477,7 @@ class CartCubit extends Cubit<CartState> {
 
   Map<String, dynamic> buildQuotePayload({
     required Outlet outlet,
+    required String customerId,
     required double manualDiscount,
     required double manualTax,
     required double manualServiceCharge,
@@ -469,6 +486,7 @@ class CartCubit extends Cubit<CartState> {
   }) {
     return {
       'outletId': outlet.id,
+      if (customerId.trim().isNotEmpty) 'customerId': customerId.trim(),
       'items': state.cart
           .map(
             (line) => {
@@ -521,6 +539,9 @@ class CartCubit extends Cubit<CartState> {
   }
 
   bool _isLineQuantityWithinStock(CartLine line, double quantity) {
+    if (!line.item.trackInventory) {
+      return true;
+    }
     if (quantity <= 0) {
       return true;
     }
@@ -545,6 +566,13 @@ class CartCubit extends Cubit<CartState> {
     }
     return 'Qty ${item.skuName} melebihi stok tersedia (${_qty(availableSaleQty)} ${item.saleUnitLabel}).';
   }
+}
+
+List<CartSession> _normalizeCartCustomerLabels(List<CartSession> sessions) {
+  return [
+    for (var index = 0; index < sessions.length; index += 1)
+      sessions[index].copyWith(label: 'Pelanggan ${index + 1}'),
+  ];
 }
 
 bool _serverReachableAfter(Object error) => error is! ApiUnavailable;

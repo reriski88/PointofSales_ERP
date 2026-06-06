@@ -1,7 +1,7 @@
 import { syncRepository } from "@/backend/repositories/sync-repository";
 import { createSale } from "@/services/sales";
 import { handleRouteError, ok, parseJson } from "@/lib/http";
-import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
 import { publishRealtimeEvent } from "@/lib/realtime";
 import { syncPushSchema } from "@/lib/validation";
 
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet", "cashier"]);
+    await requirePermission(actor, "cashier", "create");
     const body = await parseJson(request, syncPushSchema);
     await requireOutletAccess(actor, body.outletId);
 

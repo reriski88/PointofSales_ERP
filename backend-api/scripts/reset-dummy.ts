@@ -30,7 +30,7 @@ async function main() {
     .insert(organization)
     .values({
       name: "POS Cemilan Dummy",
-      logoUrl: "/images/login-pos-cartoon-transaction-transparent.png",
+      logoUrl: null,
       receiptLayout: {
         autoPrint: false,
         printerName: "Thermal Bluetooth RPP02N",
@@ -59,14 +59,14 @@ async function main() {
         name: "Cemilan Pusat",
         code: "PUSAT",
         address: "Jl. Demo Raya No. 1",
-        logoUrl: "/images/login-pos-cartoon-transaction-transparent.png",
+        logoUrl: null,
       },
       {
         organizationId: org.id,
         name: "Cemilan Tablet",
         code: "TABLET",
         address: "Outlet dummy untuk tes tablet",
-        logoUrl: "/images/login-pos-cartoon-transaction-transparent.png",
+        logoUrl: null,
       },
     ])
     .returning();
@@ -205,17 +205,30 @@ async function main() {
   );
 
   await db.insert(inventoryBatch).values(
-    skus.map((item, index) => ({
-      organizationId: org.id,
-      outletId: mainOutlet.id,
-      skuId: item.id,
-      lotCode: `DUMMY-${index + 1}`,
-      initialBaseQty: index < 3 ? "8000.000" : "80.000",
-      onHandBaseQty: index < 3 ? "8000.000" : "80.000",
-      unitCost: item.cost,
-      sourceType: "dummy_reset",
-      note: "Dummy stock batch",
-    })),
+    skus.flatMap((item, index) => [
+      {
+        organizationId: org.id,
+        outletId: mainOutlet.id,
+        skuId: item.id,
+        lotCode: `DUMMY-PUSAT-${index + 1}`,
+        initialBaseQty: index < 3 ? "8000.000" : "80.000",
+        onHandBaseQty: index < 3 ? "8000.000" : "80.000",
+        unitCost: item.cost,
+        sourceType: "dummy_reset",
+        note: "Dummy stock batch",
+      },
+      {
+        organizationId: org.id,
+        outletId: tabletOutlet.id,
+        skuId: item.id,
+        lotCode: `DUMMY-TABLET-${index + 1}`,
+        initialBaseQty: index < 3 ? "2500.000" : "32.000",
+        onHandBaseQty: index < 3 ? "2500.000" : "32.000",
+        unitCost: item.cost,
+        sourceType: "dummy_reset",
+        note: "Dummy stock batch tablet",
+      },
+    ]),
   );
 
   await db.insert(stockMovement).values(

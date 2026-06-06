@@ -6,25 +6,30 @@ import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac
 import { createProductSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
+const allOutletsValue = "__all_outlets__";
+
+function requireSpecificOutletId(outletId: string | null) {
+  if (!outletId || outletId === allOutletsValue) {
+    throw new ApiError("BAD_REQUEST", "Menu Produk membutuhkan outlet spesifik. Pilih satu outlet terlebih dahulu, bukan Semua Outlet.", 400);
+  }
+  return outletId;
+}
 
 export async function GET(request: Request) {
   try {
     const actor = await requireActor(request);
     await requirePermission(actor, "products", "view");
-    const outletId = new URL(request.url).searchParams.get("outletId");
-    if (!outletId) {
-      throw new ApiError("BAD_REQUEST", "outletId is required", 400);
-    }
+    const outletId = requireSpecificOutletId(new URL(request.url).searchParams.get("outletId"));
     await requireOutletAccess(actor, outletId);
     const [rows, outletSkus] = await Promise.all([
-      productRepository.findManyWithSkus(actor.organizationId),
+      productRepository.findManyWithSkus(actor.organizationId, outletId),
       productRepository.findSkuIdsByOutlet(outletId),
     ]);
     const outletSkuIds = new Set(outletSkus.map((row) => row.skuId));
     const visibleRows = rows
       .map((row) => ({
         ...row,
-        skus: row.skus.filter((item) => outletSkuIds.has(item.id)),
+        skus: row.skus.filter((item) => outletSkuIds.has(item.id) || item.trackInventory === false),
       }))
       .filter((row) => row.skus.length > 0);
     return ok(visibleRows);
@@ -37,10 +42,7 @@ export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
     await requirePermission(actor, "products", "create");
-    const outletId = new URL(request.url).searchParams.get("outletId");
-    if (!outletId) {
-      throw new ApiError("BAD_REQUEST", "outletId is required", 400);
-    }
+    const outletId = requireSpecificOutletId(new URL(request.url).searchParams.get("outletId"));
     await requireOutletAccess(actor, outletId);
     const body = await parseJson(request, createProductSchema);
     const result = await productRepository.createWithSku(
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
       {
         name: body.name,
         category: body.category,
+        imageUrl: body.imageUrl ?? null,
         voidWindowHours: body.voidWindowHours,
         refundWindowHours: body.refundWindowHours,
       },
@@ -55,12 +58,15 @@ export async function POST(request: Request) {
         sku: body.sku.sku,
         barcode: body.sku.barcode,
         name: body.sku.name,
+        imageUrl: body.sku.imageUrl ?? null,
         baseUnitId: body.sku.baseUnitId,
         saleUnitId: body.sku.saleUnitId,
         saleUnitToBaseFactor: fixed(body.sku.saleUnitToBaseFactor, 6),
         price: fixed(body.sku.price),
         cost: fixed(body.sku.cost, 6),
         minStockBaseQty: fixed(body.sku.minStockBaseQty, 3),
+        trackInventory: body.sku.trackInventory,
+        quantityMode: body.sku.quantityMode,
       },
       outletId,
     );

@@ -6,9 +6,9 @@ export async function GET() {
   return NextResponse.json({
     openapi: "3.1.0",
     info: {
-      title: "POS ERP API",
+      title: "Smart POS ERP",
       version: "0.1.0",
-      description: "Backend POS ERP untuk web admin, Flutter APK, PostgreSQL, Drizzle ORM, dan Better Auth.",
+      description: "Smart POS ERP untuk web admin, Flutter APK, PostgreSQL, Drizzle ORM, dan Better Auth.",
     },
     servers: [
       {

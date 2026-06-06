@@ -1,10 +1,11 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   auditLog,
   inventoryBalance,
   inventoryBatch,
   outlet,
+  product,
   purchaseOrder,
   purchaseOrderItem,
   purchasePayment,
@@ -58,11 +59,14 @@ export const purchaseRepository = {
       .limit(1);
   },
 
-  findActiveSku(tx: Tx, skuId: string, organizationId: string) {
+  findActiveSku(tx: Tx, skuId: string, organizationId: string, outletId?: string) {
+    const conditions = [eq(sku.id, skuId), eq(sku.organizationId, organizationId), eq(sku.isActive, true)];
+    if (outletId) conditions.push(eq(product.outletId, outletId), eq(product.isActive, true));
     return tx
-      .select()
+      .select({ ...getTableColumns(sku) })
       .from(sku)
-      .where(and(eq(sku.id, skuId), eq(sku.organizationId, organizationId), eq(sku.isActive, true)))
+      .innerJoin(product, eq(product.id, sku.productId))
+      .where(and(...conditions))
       .limit(1);
   },
 

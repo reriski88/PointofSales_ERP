@@ -13,24 +13,9 @@ function emptyPermissions() {
   return {} as Record<RoleAccessMenuKey, RoleAccessAction[]>;
 }
 
-function cachedPermissions() {
-  if (typeof window === "undefined") return emptyPermissions();
-  try {
-    const parsed = JSON.parse(
-      window.sessionStorage.getItem(accessCacheKey) ?? "{}",
-    ) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return emptyPermissions();
-    }
-    return parsed as Record<RoleAccessMenuKey, RoleAccessAction[]>;
-  } catch {
-    return emptyPermissions();
-  }
-}
-
 export function useRolePermissions(menu: RoleAccessMenuKey) {
   const [permissions, setPermissions] =
-    useState<Record<RoleAccessMenuKey, RoleAccessAction[]>>(cachedPermissions);
+    useState<Record<RoleAccessMenuKey, RoleAccessAction[]>>(emptyPermissions);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {

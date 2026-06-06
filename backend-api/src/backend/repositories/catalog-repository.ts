@@ -11,17 +11,23 @@ export const catalogRepository = {
     return db
       .select({
         productId: product.id,
+        globalProductId: product.globalProductId,
         productName: product.name,
+        productImageUrl: product.imageUrl,
         category: product.category,
         skuId: sku.id,
+        globalSkuId: sku.globalSkuId,
         skuCode: sku.sku,
         barcode: sku.barcode,
         skuName: sku.name,
+        skuImageUrl: sku.imageUrl,
         price: sku.price,
         cost: sku.cost,
         baseUnitId: sku.baseUnitId,
         saleUnitId: sku.saleUnitId,
         saleUnitToBaseFactor: sku.saleUnitToBaseFactor,
+        trackInventory: sku.trackInventory,
+        quantityMode: sku.quantityMode,
         baseUnitCode: baseUnit.code,
         saleUnitCode: saleUnit.code,
         onHandBaseQty: inventoryBalance.onHandBaseQty,
@@ -33,18 +39,39 @@ export const catalogRepository = {
       .leftJoin(inventoryBalance, and(eq(inventoryBalance.skuId, sku.id), eq(inventoryBalance.outletId, outletId)))
       .leftJoin(baseUnit, eq(baseUnit.id, sku.baseUnitId))
       .leftJoin(saleUnit, eq(saleUnit.id, sku.saleUnitId))
-      .where(and(eq(sku.organizationId, organizationId), eq(sku.isActive, true), eq(product.isActive, true)));
+      .where(and(eq(sku.organizationId, organizationId), eq(product.outletId, outletId), eq(sku.isActive, true), eq(product.isActive, true)));
   },
 
   async pullChanges(organizationId: string, outletId: string, sinceDate: Date) {
     const products = await db
       .select()
       .from(product)
-      .where(and(eq(product.organizationId, organizationId), gt(product.updatedAt, sinceDate)));
+      .where(and(eq(product.organizationId, organizationId), eq(product.outletId, outletId), gt(product.updatedAt, sinceDate)));
     const skus = await db
-      .select()
+      .select({
+        id: sku.id,
+        organizationId: sku.organizationId,
+        productId: sku.productId,
+        globalSkuId: sku.globalSkuId,
+        sku: sku.sku,
+        barcode: sku.barcode,
+        name: sku.name,
+        imageUrl: sku.imageUrl,
+        baseUnitId: sku.baseUnitId,
+        saleUnitId: sku.saleUnitId,
+        saleUnitToBaseFactor: sku.saleUnitToBaseFactor,
+        price: sku.price,
+        cost: sku.cost,
+        minStockBaseQty: sku.minStockBaseQty,
+        trackInventory: sku.trackInventory,
+        quantityMode: sku.quantityMode,
+        isActive: sku.isActive,
+        createdAt: sku.createdAt,
+        updatedAt: sku.updatedAt,
+      })
       .from(sku)
-      .where(and(eq(sku.organizationId, organizationId), gt(sku.updatedAt, sinceDate)));
+      .innerJoin(product, eq(product.id, sku.productId))
+      .where(and(eq(sku.organizationId, organizationId), eq(product.outletId, outletId), gt(sku.updatedAt, sinceDate)));
     const units = await db
       .select()
       .from(unit)

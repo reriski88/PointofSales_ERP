@@ -8,6 +8,8 @@ class PosApi {
   PosApi({required String baseUrl, this.cookie = '', this.bearer = ''})
     : baseUrl = _normalizeBaseUrl(baseUrl);
 
+  static const mobileOrigin = 'pos://mobile';
+
   final String baseUrl;
   String cookie;
   String bearer;
@@ -35,6 +37,23 @@ class PosApi {
     bearer = _findToken(body) ?? bearer;
   }
 
+  Future<void> signOut() async {
+    try {
+      await _send('POST', '/api/auth/sign-out', body: <String, dynamic>{});
+    } finally {
+      cookie = '';
+      bearer = '';
+    }
+  }
+
+  Map<String, String> assetHeaders() {
+    return {
+      'Accept': '*/*',
+      if (cookie.isNotEmpty) 'Cookie': cookie,
+      if (bearer.isNotEmpty) 'Authorization': 'Bearer $bearer',
+    };
+  }
+
   Future<bool> checkHealth() async {
     try {
       final response = await http
@@ -49,6 +68,55 @@ class PosApi {
     }
   }
 
+  Stream<RealtimeEvent> realtimeEvents() async* {
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', Uri.parse('$baseUrl/api/realtime'));
+      request.headers.addAll({
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Origin': mobileOrigin,
+        'Referer': '$mobileOrigin/',
+        if (cookie.isNotEmpty) 'Cookie': cookie,
+        if (bearer.isNotEmpty) 'Authorization': 'Bearer $bearer',
+      });
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(response.statusCode, 'HTTP ${response.statusCode}');
+      }
+
+      final lines = response.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      final dataLines = <String>[];
+      await for (final line in lines) {
+        if (line.isEmpty) {
+          final rawData = dataLines.join('\n');
+          dataLines.clear();
+          if (rawData.isEmpty) continue;
+          final decoded = _tryDecode(rawData);
+          if (decoded is Map) {
+            yield RealtimeEvent.fromJson(Map<String, dynamic>.from(decoded));
+          }
+          continue;
+        }
+        if (line.startsWith(':')) continue;
+        if (line.startsWith('data:')) {
+          dataLines.add(line.substring(5).trimLeft());
+        }
+      }
+    } on TimeoutException catch (error) {
+      throw ApiUnavailable(error.toString());
+    } catch (error) {
+      if (error is ApiException || error is ApiUnavailable) rethrow;
+      throw ApiUnavailable(error.toString());
+    } finally {
+      client.close();
+    }
+  }
+
   Future<List<Outlet>> listOutlets() async {
     final data = await _request('GET', '/api/outlets');
     return (data as List)
@@ -59,6 +127,17 @@ class PosApi {
   Future<CurrentUser> fetchProfile() async {
     final data = await _request('GET', '/api/profile');
     return CurrentUser.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  Future<List<Customer>> fetchCustomers() async {
+    final data = await _request('GET', '/api/customers');
+    final rows = data is Map
+        ? ((data['items'] as List?) ?? [])
+        : (data as List);
+    return rows
+        .map((item) => Customer.fromJson(Map<String, dynamic>.from(item)))
+        .where((item) => item.isActive)
+        .toList();
   }
 
   Future<CurrentUser> updateProfile(String name) async {
@@ -161,13 +240,47 @@ class PosApi {
     return Shift.fromJson(Map<String, dynamic>.from(data));
   }
 
-  Future<Shift> closeShift(String shiftId, double actualCash) async {
+  Future<Shift> closeShift(
+    String shiftId,
+    double actualCash, {
+    String? varianceReason,
+  }) async {
     final data = await _request(
       'POST',
       '/api/shifts/close',
-      body: {'shiftId': shiftId, 'actualCash': actualCash},
+      body: {
+        'shiftId': shiftId,
+        'actualCash': actualCash,
+        if (varianceReason != null && varianceReason.trim().isNotEmpty)
+          'varianceReason': varianceReason.trim(),
+      },
     );
     return Shift.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  Future<ShiftSummary> fetchShiftSummary(String shiftId) async {
+    final data = await _request('GET', '/api/shifts/$shiftId/summary');
+    return ShiftSummary.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  Future<void> createCashMovement({
+    required String shiftId,
+    required String type,
+    required double amount,
+    required String reason,
+    String? note,
+  }) async {
+    await _request(
+      'POST',
+      '/api/shifts/cash-movements',
+      body: {
+        'shiftId': shiftId,
+        'type': type,
+        'amount': amount,
+        'reason': reason,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      },
+    );
   }
 
   Future<Map<String, dynamic>> createSale(Map<String, dynamic> payload) async {
@@ -199,6 +312,7 @@ class PosApi {
     required double quantity,
     required String unitId,
     required String reason,
+    String? idempotencyKey,
     String? note,
   }) async {
     await _request(
@@ -207,12 +321,58 @@ class PosApi {
       body: {
         'outletId': outletId,
         'skuId': skuId,
+        if (idempotencyKey != null && idempotencyKey.isNotEmpty)
+          'idempotencyKey': idempotencyKey,
         'quantity': quantity,
         'unitId': unitId,
         'reason': reason,
         if (note != null && note.isNotEmpty) 'note': note,
       },
     );
+  }
+
+  Future<void> voidSale({
+    required String saleId,
+    required String reason,
+  }) async {
+    await _request('POST', '/api/sales/$saleId/void', body: {'reason': reason});
+  }
+
+  Future<void> refundSale({
+    required String saleId,
+    required String reason,
+    required bool restock,
+    String? refundMethod,
+  }) async {
+    await _request(
+      'POST',
+      '/api/sales/$saleId/refund',
+      body: {
+        'reason': reason,
+        'restock': restock,
+        if (refundMethod != null && refundMethod.isNotEmpty)
+          'refundMethod': refundMethod,
+      },
+    );
+  }
+
+  Future<List<PendingVarianceShift>> pendingVarianceShifts(
+    String outletId,
+  ) async {
+    final data = await _request(
+      'GET',
+      '/api/shifts/pending-variance?outletId=$outletId',
+    );
+    return (data as List)
+        .map(
+          (item) =>
+              PendingVarianceShift.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList();
+  }
+
+  Future<void> approveShiftVariance(String shiftId) async {
+    await _request('POST', '/api/shifts/$shiftId/approve-variance');
   }
 
   Future<List<Map<String, dynamic>>> pushSync(
@@ -253,6 +413,8 @@ class PosApi {
     final uri = Uri.parse('$baseUrl$path');
     final headers = <String, String>{
       'Accept': 'application/json',
+      'Origin': mobileOrigin,
+      'Referer': '$mobileOrigin/',
       if (body != null) 'Content-Type': 'application/json',
       if (auth && cookie.isNotEmpty) 'Cookie': cookie,
       if (auth && bearer.isNotEmpty) 'Authorization': 'Bearer $bearer',

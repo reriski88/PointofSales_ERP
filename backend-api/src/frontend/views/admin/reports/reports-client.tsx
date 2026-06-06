@@ -1,32 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import Swal from "sweetalert2";
 import {
   BarChart3,
   Ban,
   Boxes,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleDollarSign,
+  Eye,
+  HandCoins,
+  PackageMinus,
   Printer,
-  RefreshCw,
+  ReceiptText,
+  Search,
   Undo2,
   Scale,
+  TrendingUp,
+  Wallet,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { CollapsibleSection } from "../_components/collapsible-section";
-import { ListControls } from "../_components/list-controls";
-import {
-  PaginationControls,
-  pageItems,
-} from "../_components/pagination-controls";
+import { Input } from "@/components/ui/input";
+import { AdminModal } from "../_components/admin-modal";
+import { printReceiptViaBrowser } from "../_components/receipt-browser-print";
+import { pageItems } from "../_components/pagination-controls";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import { getOutlets, getProfile } from "@/frontend/controllers/admin-data-cache";
 import { useRealtimeEvents } from "@/frontend/controllers/use-realtime-events";
@@ -116,6 +116,9 @@ type ReceiptSettings = {
     printerName?: string;
     paperWidth?: "58" | "80";
     header?: string[];
+    body?: string[];
+    footer?: string[];
+    footerNote?: string;
   } | null;
 };
 type WasteDetail = {
@@ -134,7 +137,7 @@ type WasteDetail = {
   createdAt: string;
 };
 
-const defaultThermalPrinterName = "Thermal Bluetooth RPP02N";
+type SummaryTone = "sky" | "emerald" | "blue" | "amber" | "violet" | "rose";
 
 export function ReportsClient() {
   const { selectedOutletId } = useSelectedOutlet();
@@ -152,6 +155,10 @@ export function ReportsClient() {
   const [detailSortBy, setDetailSortBy] = useState("date-desc");
   const [detailPage, setDetailPage] = useState(1);
   const [detailPageSize, setDetailPageSize] = useState(10);
+  const [wasteSearch, setWasteSearch] = useState("");
+  const [wastePage, setWastePage] = useState(1);
+  const [wastePageSize, setWastePageSize] = useState(10);
+  const [detailSale, setDetailSale] = useState<SalesDetail | null>(null);
   const [canManageSaleCorrections, setCanManageSaleCorrections] = useState(false);
   const [actionSaleId, setActionSaleId] = useState<string | null>(null);
   const [reprintSaleId, setReprintSaleId] = useState<string | null>(null);
@@ -240,6 +247,29 @@ export function ReportsClient() {
     visibleSalesDetails,
     detailPage,
     detailPageSize,
+  );
+  const visibleWasteDetails = useMemo(() => {
+    const keyword = wasteSearch.trim().toLowerCase();
+    return wasteDetails.filter((item) => {
+      if (!keyword) return true;
+      return [
+        item.skuName,
+        item.skuCode,
+        item.outletName,
+        item.outletCode,
+        item.status,
+        item.reason,
+        item.note ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword);
+    });
+  }, [wasteDetails, wasteSearch]);
+  const pagedWasteDetails = pageItems(
+    visibleWasteDetails,
+    wastePage,
+    wastePageSize,
   );
 
   async function loadOutlets() {
@@ -395,43 +425,76 @@ export function ReportsClient() {
     }
   }
 
+  async function submitSyncReviewResolution(item: SalesDetail, action: "post" | "reject") {
+    const isPost = action === "post";
+    const result = await Swal.fire<{ reason?: string }>({
+      icon: isPost ? "question" : "warning",
+      title: isPost ? "Post transaksi review?" : "Reject transaksi review?",
+      html: isPost
+        ? `<p class="text-left text-sm">Sistem akan mencoba posting stok, payment, shift cash, dan jurnal untuk <strong>${item.receiptNumber}</strong>. Jika stok/batch atau shift belum valid, proses akan ditolak.</p>`
+        : `<p class="text-left text-sm">Transaksi <strong>${item.receiptNumber}</strong> akan ditandai batal dan tidak masuk omzet/stok/finance.</p>`,
+      input: isPost ? undefined : "textarea",
+      inputLabel: isPost ? undefined : "Alasan reject",
+      inputPlaceholder: isPost ? undefined : "Contoh: transaksi offline double, stok tidak valid",
+      showCancelButton: true,
+      confirmButtonText: isPost ? "Post" : "Reject",
+      cancelButtonText: "Batal",
+      confirmButtonColor: isPost ? "#16a34a" : "#dc2626",
+      preConfirm: (value) => {
+        const reason = String(value ?? "").trim();
+        if (!isPost && reason.length < 3) {
+          Swal.showValidationMessage("Alasan minimal 3 karakter.");
+          return false;
+        }
+        return { reason };
+      },
+    });
+    if (!result.isConfirmed) return;
+
+    setActionSaleId(item.id);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/sales/${item.id}/sync-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, reason: result.value?.reason }),
+      });
+      if (!response.ok) {
+        setMessage(await readError(response, "Proses transaksi review gagal."));
+        return;
+      }
+      setMessage(`${item.receiptNumber} berhasil ${isPost ? "diposting" : "direject"}.`);
+      await Swal.fire({
+        icon: "success",
+        title: "Berhasil",
+        text: `${item.receiptNumber} berhasil ${isPost ? "diposting" : "direject"}.`,
+      });
+      await loadReports();
+    } catch {
+      setMessage("Proses transaksi review gagal. Koneksi server tidak tersedia.");
+    } finally {
+      setActionSaleId(null);
+    }
+  }
+
   async function reprintSale(item: SalesDetail) {
     const layout = receiptSettings?.receiptLayout;
-    const printerName = layout?.printerName?.trim() || defaultThermalPrinterName;
     setReprintSaleId(item.id);
     setMessage(null);
     try {
-      const logoRasterBase64 = await buildReceiptLogoRasterBase64({
-        logoUrl: item.outletLogoUrl || receiptSettings?.defaultOutletLogoUrl,
-        enabled: layout?.header?.includes("logo") ?? true,
+      await printReceiptViaBrowser(buildSalesDetailReceiptText(item, layout), {
+        title: `Cetak ulang ${item.receiptNumber}`,
         paperWidth: layout?.paperWidth === "80" ? "80" : "58",
+        logoUrl: item.outletLogoUrl || receiptSettings?.defaultOutletLogoUrl,
+        showLogo: layout?.header?.includes("logo") ?? true,
       });
-      const response = await fetch("/api/print/receipt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          printerName,
-          logoRasterBase64,
-          text: buildSalesDetailReceiptText(item),
-        }),
-      });
-      if (!response.ok) {
-        const error = await readError(response, "Cetak ulang struk gagal.");
-        setMessage(error);
-        await Swal.fire({
-          icon: "error",
-          title: "Cetak ulang gagal",
-          text: error,
-        });
-        return;
-      }
       await Swal.fire({
         icon: "success",
-        title: "Struk dicetak ulang",
-        text: `${item.receiptNumber} terkirim ke printer ${printerName}.`,
+        title: "Dialog print dibuka",
+        text: "Pilih printer dari browser.",
       });
     } catch {
-      const error = `Cetak ulang struk gagal. Server lokal tidak dapat menghubungi printer ${printerName}.`;
+      const error = "Cetak ulang struk gagal. Browser belum bisa membuka dialog print.";
       setMessage(error);
       await Swal.fire({
         icon: "error",
@@ -465,36 +528,70 @@ export function ReportsClient() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="h-1 bg-[linear-gradient(90deg,#2563eb,#16a34a,#f59e0b,#ef4444,#8b5cf6)]" />
+        <div className="flex flex-col justify-between gap-3 px-4 pt-4 md:flex-row md:items-start">
           <div>
-            <CardTitle>Laporan Backend</CardTitle>
-            <CardDescription>
-              Ringkasan sales, stok, dan remahan dari data kasir Flutter.
-            </CardDescription>
+            <h2 className="text-base font-semibold leading-snug text-foreground">Kesimpulan Data Penjualan</h2>
+            <p className="mt-1 text-xs leading-4 text-muted-foreground">Total dari data laporan penjualan pada outlet dan periode yang dipilih.</p>
           </div>
-          <div className="flex flex-col gap-3 md:flex-row md:items-end">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void loadReports()}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
+          <span className="inline-flex h-9 w-fit items-center rounded-md border bg-background px-3 text-xs font-medium text-muted-foreground">{outletId === allOutletsValue ? "Semua outlet" : "Outlet aktif"}</span>
+        </div>
+        <div className="px-4 pt-4">
           {message ? (
-            <p className="text-sm text-destructive">{message}</p>
+            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{message}</p>
           ) : null}
           {isLoading ? (
             <div className="rounded-lg border bg-muted/25 p-4 text-sm text-muted-foreground">
               Memuat filter dan ringkasan laporan...
             </div>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+        <div className="grid gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
+          <SummaryTile
+            icon={ReceiptText}
+            label="Total Transaksi"
+            value={formatNumber(sales?.transactionCount ?? 0, 0)}
+            tone="sky"
+            caption="Struk masuk"
+          />
+          <SummaryTile
+            icon={CircleDollarSign}
+            label="Total Gross"
+            value={currency(sales?.grossSales)}
+            tone="emerald"
+            caption="Sebelum potongan"
+          />
+          <SummaryTile icon={Wallet} label="Total Net" value={currency(sales?.netSales)} tone="blue" caption="Penjualan bersih" />
+          <SummaryTile icon={PackageMinus} label="Total HPP" value={currency(sales?.cogs)} tone="amber" caption="Biaya barang" />
+          <SummaryTile
+            icon={TrendingUp}
+            label="Total Laba"
+            value={currency(sales?.grossProfit)}
+            tone="violet"
+            caption="Gross profit"
+          />
+          <SummaryTile
+            icon={HandCoins}
+            label="Rata-rata / Struk"
+            value={currency(averageTicket(sales))}
+            tone="rose"
+            caption="Average ticket"
+          />
+        </div>
+        <div className="border-t px-4 py-4">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-medium text-foreground">Margin laba kotor</p>
+              <p className="text-xs text-muted-foreground">Perbandingan laba terhadap penjualan bersih.</p>
+            </div>
+            <span className="inline-flex h-9 w-fit items-center rounded-lg bg-emerald-100 px-3 text-sm font-semibold text-emerald-700">{profitMargin(sales)}</span>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-[linear-gradient(90deg,#16a34a,#22c55e,#84cc16)] transition-all" style={{ width: `${profitMarginWidth(sales)}%` }} />
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-4 md:grid-cols-3">
         <ReportCard
@@ -530,280 +627,394 @@ export function ReportsClient() {
         />
       </div>
 
-      <CollapsibleSection
-        title="Kesimpulan Data Penjualan"
-        description="Total dari data laporan penjualan pada outlet dan periode yang dipilih."
-        isLoading={isLoading}
-        loadingText="Menghitung kesimpulan data penjualan..."
-      >
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <SummaryTile
-            label="Total Transaksi"
-            value={formatNumber(sales?.transactionCount ?? 0, 0)}
-          />
-          <SummaryTile
-            label="Total Gross"
-            value={currency(sales?.grossSales)}
-          />
-          <SummaryTile label="Total Net" value={currency(sales?.netSales)} />
-          <SummaryTile label="Total HPP" value={currency(sales?.cogs)} />
-          <SummaryTile
-            label="Total Laba"
-            value={currency(sales?.grossProfit)}
-          />
-          <SummaryTile
-            label="Rata-rata / Struk"
-            value={currency(averageTicket(sales))}
-          />
+      <section className="rounded-lg border bg-card p-4 shadow-sm">
+        <div className="mb-4 flex flex-col gap-1">
+          <div>
+            <h2 className="text-base font-semibold leading-snug text-foreground">Detail Penjualan</h2>
+            <p className="mt-1 text-xs leading-4 text-muted-foreground">{visibleSalesDetails.length} dari {salesDetails.length} transaksi terbaru sesuai outlet dan filter laporan.</p>
+          </div>
         </div>
-        <p className="mt-4 text-sm text-muted-foreground">
-          Margin laba kotor:{" "}
-          <span className="font-medium text-foreground">
-            {profitMargin(sales)}
-          </span>
-          .
-        </p>
-      </CollapsibleSection>
+        <div className="overflow-hidden rounded-xl border bg-card">
+          <ReportTableControls search={detailSearch} setSearch={setDetailSearch} statusFilter={detailStatusFilter} setStatusFilter={setDetailStatusFilter} paymentFilter={detailPaymentFilter} setPaymentFilter={setDetailPaymentFilter} sortBy={detailSortBy} setSortBy={setDetailSortBy} pageSize={detailPageSize} setPageSize={setDetailPageSize} setPage={setDetailPage} statusOptions={statusOptions} paymentOptions={paymentOptions} />
+          <div className="thin-x-scroll overflow-x-auto">
+          <table className="min-w-[1088px] table-fixed border-collapse text-sm">
+            <colgroup>
+              <col className="w-[210px]" />
+              <col className="w-[180px]" />
+              <col className="w-[120px]" />
+              <col className="w-[150px]" />
+              <col className="w-[150px]" />
+              <col className="w-[160px]" />
+              <col className="w-[130px]" />
+            </colgroup>
+            <thead className="border-b bg-background text-xs font-semibold text-foreground">
+              <tr>
+                <th className="px-4 py-3 text-left">Struk</th>
+                <th className="px-4 py-3 text-left">Kasir / Bayar</th>
+                <th className="px-4 py-3 text-left">Item</th>
+                <th className="px-4 py-3 text-left">Total</th>
+                <th className="px-4 py-3 text-left">Laba</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody className="bg-background">
+              {pagedSalesDetails.map((item) => {
+                const canVoidSale = canCorrectSale(item, "void");
+                const canRefundSale = canCorrectSale(item, "refund");
+                return (
+                  <tr key={item.id} className="border-b text-sm last:border-b-0">
+                    <td className="px-4 py-3 align-middle">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{item.receiptNumber}</p>
+                        <p className="truncate text-xs text-muted-foreground">{formatDate(item.createdAt)}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                      <div className="min-w-0">
+                        <p className="truncate">{item.cashierName || "Kasir"}</p>
+                        <p className="truncate text-xs text-muted-foreground">{item.paymentMethods || "-"}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                      <p className="font-medium">{item.itemCount.toLocaleString("id-ID")}</p>
+                      <p className="text-xs text-muted-foreground">item</p>
+                    </td>
+                    <td className="px-4 py-3 align-middle font-medium">{currency(item.grandTotal)}</td>
+                    <td className="px-4 py-3 align-middle font-medium">{currency(item.grossProfit)}</td>
+                    <td className="px-4 py-3 align-middle">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${saleStatusClass(item.status)}`}>{saleStatusLabel(item.status)}</span>
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                      <div className="flex justify-end gap-1">
+                        <Button type="button" variant="outline" size="sm" className="h-8 w-8 border-sky-200 p-0 text-sky-600 hover:bg-sky-50 hover:text-sky-700" onClick={() => setDetailSale(item)} aria-label="Lihat detail" title="Lihat detail">
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="h-8 w-8 border-violet-200 p-0 text-violet-600 hover:bg-violet-50 hover:text-violet-700" disabled={reprintSaleId === item.id} onClick={() => void reprintSale(item)} aria-label="Cetak ulang" title="Cetak ulang">
+                          <Printer className="h-4 w-4" />
+                        </Button>
+                        {canManageSaleCorrections && item.status === "completed" && canVoidSale ? (
+                          <Button type="button" variant="outline" size="sm" className="h-8 w-8 border-red-200 p-0 text-red-600 hover:bg-red-50 hover:text-red-700" disabled={actionSaleId === item.id} onClick={() => void submitSaleCorrection(item, "void")} aria-label="Void" title="Void">
+                            <Ban className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {canManageSaleCorrections && item.status === "completed" && canRefundSale ? (
+                          <Button type="button" variant="outline" size="sm" className="h-8 w-8 border-amber-200 p-0 text-amber-700 hover:bg-amber-50 hover:text-amber-800" disabled={actionSaleId === item.id} onClick={() => void submitSaleCorrection(item, "refund")} aria-label="Retur" title="Retur">
+                            <Undo2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {canManageSaleCorrections && item.status === "sync_review" ? (
+                          <Button type="button" variant="outline" size="sm" className="h-8 w-8 border-emerald-200 p-0 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800" disabled={actionSaleId === item.id} onClick={() => void submitSyncReviewResolution(item, "post")} aria-label="Post review" title="Post review">
+                            <CheckCircle2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {canManageSaleCorrections && item.status === "sync_review" ? (
+                          <Button type="button" variant="outline" size="sm" className="h-8 w-8 border-red-200 p-0 text-red-600 hover:bg-red-50 hover:text-red-700" disabled={actionSaleId === item.id} onClick={() => void submitSyncReviewResolution(item, "reject")} aria-label="Reject review" title="Reject review">
+                            <XCircle className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!visibleSalesDetails.length && !isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-sm text-muted-foreground">Data transaksi tidak ditemukan.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        <TablePager page={detailPage} pageSize={detailPageSize} total={visibleSalesDetails.length} setPage={setDetailPage} />
+        </div>
+      </section>
 
-      <CollapsibleSection
-        title="Detail Penjualan"
-        description={`${visibleSalesDetails.length} dari ${salesDetails.length} transaksi terbaru sesuai outlet dan filter laporan.`}
-        isLoading={isLoading}
-        loadingText="Memuat detail transaksi penjualan..."
-      >
-        <ListControls
-          search={detailSearch}
-          onSearchChange={setDetailSearch}
-          searchPlaceholder="Cari struk, kasir, metode bayar..."
-          filters={[
-            {
-              label: "Status",
-              value: detailStatusFilter,
-              onChange: setDetailStatusFilter,
-              options: [
-                { value: "all", label: "Semua status" },
-                ...statusOptions,
-              ],
-            },
-            {
-              label: "Pembayaran",
-              value: detailPaymentFilter,
-              onChange: setDetailPaymentFilter,
-              options: [
-                { value: "all", label: "Semua metode" },
-                ...paymentOptions,
-              ],
-            },
-          ]}
-          sort={detailSortBy}
-          onSortChange={setDetailSortBy}
-          sortOptions={[
-            { value: "date-desc", label: "Terbaru" },
-            { value: "date-asc", label: "Terlama" },
-            { value: "total-desc", label: "Total terbesar" },
-            { value: "total-asc", label: "Total terkecil" },
-            { value: "profit-desc", label: "Laba terbesar" },
-            { value: "receipt-asc", label: "Nomor struk" },
-          ]}
-        />
-        <div className="mt-4">
-          <PaginationControls
-            page={detailPage}
-            pageSize={detailPageSize}
-            total={visibleSalesDetails.length}
-            onPageChange={setDetailPage}
-            onPageSizeChange={(value) => {
-              setDetailPageSize(value);
-              setDetailPage(1);
-            }}
-          />
+      <section className="rounded-lg border bg-card p-4 shadow-sm">
+        <div className="mb-4 flex flex-col gap-1">
+          <div>
+            <h2 className="text-base font-semibold leading-snug text-foreground">Detail Remahan</h2>
+            <p className="mt-1 text-xs leading-4 text-muted-foreground">{visibleWasteDetails.length} dari {wasteDetails.length} catatan remahan sesuai outlet dan pencarian.</p>
+          </div>
         </div>
-        <div className="mt-4 grid gap-3">
-          {pagedSalesDetails.map((item) => {
-            const canVoidSale = canCorrectSale(item, "void");
-            const canRefundSale = canCorrectSale(item, "refund");
-            return (
-              <div key={item.id} className="rounded-lg border p-4 text-sm">
-                <div className="grid gap-3 lg:grid-cols-[1.2fr_0.9fr_0.7fr_0.8fr_0.8fr_0.8fr_0.8fr]">
-                  <div>
-                    <p className="font-medium">{item.receiptNumber}</p>
-                    <p className="text-muted-foreground">
-                      {formatDate(item.createdAt)}
-                    </p>
-                  </div>
-                  <div>
-                    <p>{item.cashierName || "Kasir"}</p>
-                    <p className="text-muted-foreground">
-                      {item.paymentMethods || "-"}
-                    </p>
-                  </div>
-                  <div>
-                    <p>{item.itemCount.toLocaleString("id-ID")} item</p>
-                    <p className="text-muted-foreground">{saleStatusLabel(item.status)}</p>
-                  </div>
-                  <MetricText label="Subtotal" value={currency(item.subtotal)} />
-                  <MetricText
-                    label="Diskon"
-                    value={currency(item.discountTotal)}
-                  />
-                  <MetricText label="Pajak" value={currency(item.taxTotal)} />
-                  <MetricText label="Service" value={currency(item.serviceChargeTotal)} />
-                  <MetricText label="Total" value={currency(item.grandTotal)} />
-                  <MetricText label="Laba" value={currency(item.grossProfit)} />
-                </div>
-                {item.promotions.length ? (
-                  <div className="mt-3 rounded-md border bg-muted/20 p-3">
-                    <p className="text-xs font-semibold uppercase text-muted-foreground">Promo</p>
-                    <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                      {item.promotions.map((promo, index) => (
-                        <div key={`${promo.name}-${index}`} className="text-sm">
-                          <p className="font-medium">{promo.name}</p>
-                          <p className="text-muted-foreground">
-                            {promo.code || "Otomatis"} - {currency(promo.discountTotal)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                <SaleItemsList saleId={item.id} items={item.items} />
-                <div className="mt-3 flex flex-wrap justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={reprintSaleId === item.id}
-                    onClick={() => void reprintSale(item)}
-                  >
-                    <Printer className="h-4 w-4" />
-                    Cetak ulang
-                  </Button>
-                  {canManageSaleCorrections && item.status === "completed" && (canVoidSale || canRefundSale) ? (
-                    <>
-                    {canVoidSale ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={actionSaleId === item.id}
-                        onClick={() => void submitSaleCorrection(item, "void")}
-                      >
-                        <Ban className="h-4 w-4" />
-                        Batalkan
-                      </Button>
-                    ) : null}
-                    {canRefundSale ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        disabled={actionSaleId === item.id}
-                        onClick={() => void submitSaleCorrection(item, "refund")}
-                      >
-                        <Undo2 className="h-4 w-4" />
-                        Retur/Pengembalian Dana
-                      </Button>
-                    ) : null}
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-          {!visibleSalesDetails.length && !isLoading ? (
-            <p className="text-sm text-muted-foreground">
-              Data transaksi tidak ditemukan.
-            </p>
-          ) : null}
+        <div className="overflow-hidden rounded-xl border bg-card">
+          <SimpleTableControls search={wasteSearch} setSearch={setWasteSearch} pageSize={wastePageSize} setPageSize={setWastePageSize} setPage={setWastePage} />
+          <div className="thin-x-scroll overflow-x-auto">
+          <table className="min-w-[1088px] table-fixed border-collapse text-sm">
+            <colgroup>
+              <col className="w-[250px]" />
+              <col className="w-[210px]" />
+              <col className="w-[150px]" />
+              <col className="w-[150px]" />
+              <col className="w-[280px]" />
+            </colgroup>
+            <thead className="border-b bg-background text-xs font-semibold text-foreground">
+              <tr>
+                <th className="px-4 py-3 text-left">Produk</th>
+                <th className="px-4 py-3 text-left">Outlet</th>
+                <th className="px-4 py-3 text-left">Qty</th>
+                <th className="px-4 py-3 text-left">Loss</th>
+                <th className="px-4 py-3 text-left">Alasan / Status</th>
+              </tr>
+            </thead>
+            <tbody className="bg-background">
+              {pagedWasteDetails.map((item) => (
+                <tr key={item.id} className="border-b text-sm last:border-b-0">
+                  <td className="px-4 py-3 align-middle">
+                    <p className="truncate font-medium">{item.skuName}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.skuCode}</p>
+                  </td>
+                  <td className="px-4 py-3 align-middle">
+                    <p className="truncate">{item.outletName}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.outletCode}</p>
+                  </td>
+                  <td className="px-4 py-3 align-middle font-medium">{number(item.quantityBase)} {item.unitCode || "unit"}</td>
+                  <td className="px-4 py-3 align-middle font-medium">{currency(item.estimatedLoss)}</td>
+                  <td className="px-4 py-3 align-middle">
+                    <p className="truncate font-medium text-orange-700">{wasteReasonLabel(item.reason)}</p>
+                    <p className="truncate text-xs text-muted-foreground">{formatDate(item.createdAt)}</p>
+                    <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${wasteStatusClass(item.status)}`}>{item.status}</span>
+                  </td>
+                </tr>
+              ))}
+              {!visibleWasteDetails.length && !isLoading ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-sm text-muted-foreground">Data remahan tidak ditemukan.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
-      </CollapsibleSection>
+        <TablePager page={wastePage} pageSize={wastePageSize} total={visibleWasteDetails.length} setPage={setWastePage} />
+        </div>
+      </section>
 
-      <CollapsibleSection
-        title="Detail Remahan"
-        description={`${wasteDetails.length} catatan remahan dari outlet yang dipilih.`}
-        isLoading={isLoading}
-        loadingText="Memuat detail remahan..."
-      >
-        <div className="grid gap-3">
-          {wasteDetails.map((item) => (
-            <div
-              key={item.id}
-              className="grid gap-3 rounded-lg border p-4 text-sm lg:grid-cols-[1fr_1fr_0.8fr_0.8fr_0.8fr]"
-            >
-              <div>
-                <p className="font-medium">{item.skuName}</p>
-                <p className="text-muted-foreground">{item.skuCode}</p>
-              </div>
-              <div>
-                <p>{item.outletName}</p>
-                <p className="text-muted-foreground">{item.outletCode}</p>
-              </div>
-              <MetricText
-                label="Qty"
-                value={`${number(item.quantityBase)} ${item.unitCode || "unit"}`}
-              />
-              <MetricText label="Loss" value={currency(item.estimatedLoss)} />
-              <div>
-                <p className="font-medium">{wasteReasonLabel(item.reason)}</p>
-                <p className="text-muted-foreground">
-                  {item.status} - {formatDate(item.createdAt)}
-                </p>
-              </div>
-            </div>
-          ))}
-          {!wasteDetails.length && !isLoading ? (
-            <p className="text-sm text-muted-foreground">
-              Data remahan tidak ditemukan.
-            </p>
-          ) : null}
-        </div>
-      </CollapsibleSection>
+      <AdminModal open={Boolean(detailSale)} title="Detail Penjualan" description={detailSale ? `${detailSale.receiptNumber} - ${detailSale.outletName}` : undefined} size="xl" onClose={() => setDetailSale(null)}>
+        {detailSale ? <SaleDetailPanel item={detailSale} /> : null}
+      </AdminModal>
     </div>
   );
 }
 
 function ReportCard(props: {
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   title: string;
   rows: Array<[string, string | number]>;
 }) {
+  const Icon = props.icon;
   return (
-    <Card>
-      <CardHeader>
-        <props.icon className="h-5 w-5 text-primary" />
-        <CardTitle>{props.title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <div className="overflow-hidden rounded-lg border bg-card shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex flex-row items-center gap-2 border-b bg-muted/20 p-3">
+        <span className="rounded-md bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></span>
+        <h3 className="text-sm font-semibold">{props.title}</h3>
+      </div>
+      <div className="grid gap-2 p-3">
         {props.rows.map(([label, value]) => (
           <div
             key={label}
-            className="flex items-center justify-between gap-4 border-b pb-2 last:border-0 last:pb-0"
+            className="flex items-center justify-between gap-4 text-sm"
           >
-            <span className="text-sm text-muted-foreground">{label}</span>
+            <span className="text-muted-foreground">{label}</span>
             <span className="font-medium">{value}</span>
           </div>
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
-function MetricText(props: { label: string; value: string }) {
+function ReportTableControls(props: {
+  search: string;
+  setSearch: (value: string) => void;
+  statusFilter: string;
+  setStatusFilter: (value: string) => void;
+  paymentFilter: string;
+  setPaymentFilter: (value: string) => void;
+  sortBy: string;
+  setSortBy: (value: string) => void;
+  pageSize: number;
+  setPageSize: (value: number) => void;
+  setPage: (value: number) => void;
+  statusOptions: Array<{ value: string; label: string }>;
+  paymentOptions: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-b px-4 py-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <span>Show</span>
+        <select className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" value={props.pageSize} onChange={(event) => { props.setPageSize(Number(event.target.value)); props.setPage(1); }}>
+          {[5, 10, 20, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <span>entries</span>
+        <select className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" value={props.statusFilter} onChange={(event) => { props.setStatusFilter(event.target.value); props.setPage(1); }}>
+          <option value="all">Semua status</option>{props.statusOptions.map((option) => <option key={option.value} value={option.value}>{saleStatusLabel(option.label)}</option>)}
+        </select>
+        <select className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" value={props.paymentFilter} onChange={(event) => { props.setPaymentFilter(event.target.value); props.setPage(1); }}>
+          <option value="all">Semua metode</option>{props.paymentOptions.map((option) => <option key={option.value} value={option.value}>{paymentMethodLabel(option.label)}</option>)}
+        </select>
+        <select className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" value={props.sortBy} onChange={(event) => { props.setSortBy(event.target.value); props.setPage(1); }}>
+          <option value="date-desc">Terbaru</option><option value="date-asc">Terlama</option><option value="total-desc">Total terbesar</option><option value="total-asc">Total terkecil</option><option value="profit-desc">Laba terbesar</option><option value="receipt-asc">Nomor struk</option>
+        </select>
+      </div>
+      <div className="relative md:w-80"><Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" /><Input className="h-11 rounded-lg pl-11" value={props.search} placeholder="Search..." onChange={(event) => { props.setSearch(event.target.value); props.setPage(1); }} /></div>
+    </div>
+  );
+}
+
+function SimpleTableControls(props: {
+  search: string;
+  setSearch: (value: string) => void;
+  pageSize: number;
+  setPageSize: (value: number) => void;
+  setPage: (value: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-b px-4 py-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <span>Show</span>
+        <select className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" value={props.pageSize} onChange={(event) => { props.setPageSize(Number(event.target.value)); props.setPage(1); }}>
+          {[5, 10, 20, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <span>entries</span>
+      </div>
+      <div className="relative md:w-80">
+        <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+        <Input className="h-11 rounded-lg pl-11" value={props.search} placeholder="Search..." onChange={(event) => { props.setSearch(event.target.value); props.setPage(1); }} />
+      </div>
+    </div>
+  );
+}
+
+function SaleDetailPanel(props: { item: SalesDetail }) {
+  const item = props.item;
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <MetricText label="Subtotal" value={currency(item.subtotal)} compact />
+        <MetricText label="Diskon" value={currency(item.discountTotal)} compact />
+        <MetricText label="Pajak" value={currency(item.taxTotal)} compact />
+        <MetricText label="Service" value={currency(item.serviceChargeTotal)} compact />
+        <MetricText label="Donasi" value={currency(item.donationTotal)} compact />
+        <MetricText label="Kembali" value={currency(item.changeTotal)} compact />
+      </div>
+      {item.promotions.length ? (
+        <div className="rounded-lg border bg-muted/15 p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Promo</p>
+          <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {item.promotions.map((promo, index) => (
+              <p key={`${promo.name}-${index}`} className="truncate rounded-md border bg-background px-3 py-2 text-sm">
+                <span className="font-medium">{promo.name}</span> <span className="text-muted-foreground">{promo.code || "Otomatis"} - {currency(promo.discountTotal)}</span>
+              </p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      <SaleItemsList saleId={item.id} items={item.items} />
+    </div>
+  );
+}
+
+function TablePager(props: {
+  page: number;
+  pageSize: number;
+  total: number;
+  setPage: (value: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(props.total / props.pageSize));
+  const currentPage = Math.min(props.page, pageCount);
+  const start = props.total === 0 ? 0 : (currentPage - 1) * props.pageSize + 1;
+  const end = Math.min(props.total, currentPage * props.pageSize);
+
+  return (
+    <div className="flex flex-col gap-3 border-t px-4 py-4 md:flex-row md:items-center md:justify-between">
+      <p className="text-sm text-muted-foreground">
+        Showing {start} to {end} of {props.total} entries
+      </p>
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-10 w-10 shrink-0 p-0"
+          disabled={currentPage <= 1}
+          onClick={() => props.setPage(currentPage - 1)}
+          aria-label="Halaman sebelumnya"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-lg bg-primary/10 px-3 text-sm font-semibold text-primary">
+          {currentPage}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-10 w-10 shrink-0 p-0"
+          disabled={currentPage >= pageCount}
+          onClick={() => props.setPage(currentPage + 1)}
+          aria-label="Halaman berikutnya"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function MetricText(props: { label: string; value: string; compact?: boolean }) {
   return (
     <div>
-      <p className="text-muted-foreground">{props.label}</p>
-      <p className="font-medium">{props.value}</p>
+      <p className={props.compact ? "text-xs text-muted-foreground" : "text-muted-foreground"}>{props.label}</p>
+      <p className={props.compact ? "text-sm font-medium" : "font-medium"}>{props.value}</p>
     </div>
   );
 }
 
-function SummaryTile(props: { label: string; value: string }) {
+function SummaryTile(props: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: SummaryTone;
+  caption: string;
+}) {
+  const Icon = props.icon;
+  const toneClasses: Record<SummaryTone, string> = {
+    sky: "border-sky-200 bg-sky-50 text-sky-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    violet: "border-violet-200 bg-violet-50 text-violet-700",
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+  };
   return (
-    <div className="rounded-lg border bg-muted/30 p-4">
-      <p className="text-sm text-muted-foreground">{props.label}</p>
-      <p className="mt-1 text-lg font-semibold">{props.value}</p>
+    <div className="group rounded-lg border bg-background p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-xs text-muted-foreground">{props.label}</p>
+          <p className="mt-1 truncate text-base font-semibold text-foreground">{props.value}</p>
+        </div>
+        <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${toneClasses[props.tone]}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className={`h-2 w-2 rounded-full ${dotClass(props.tone)}`} />
+        <span className="truncate">{props.caption}</span>
+      </div>
     </div>
   );
+}
+
+function dotClass(tone: SummaryTone) {
+  const classes: Record<SummaryTone, string> = {
+    sky: "bg-sky-500",
+    emerald: "bg-emerald-500",
+    blue: "bg-blue-500",
+    amber: "bg-amber-500",
+    violet: "bg-violet-500",
+    rose: "bg-rose-500",
+  };
+  return classes[tone];
 }
 
 function SaleItemsList(props: { saleId: string; items: SalesDetailItem[] }) {
@@ -817,7 +1028,7 @@ function SaleItemsList(props: { saleId: string; items: SalesDetailItem[] }) {
   const end = Math.min(props.items.length, currentPage * pageSize);
 
   return (
-    <div className="mt-4 rounded-md bg-muted/30 p-3">
+    <div className="mt-3 rounded-md bg-muted/20 p-2">
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Produk Dibeli
@@ -861,7 +1072,7 @@ function SaleItemsList(props: { saleId: string; items: SalesDetailItem[] }) {
           {visibleItems.map((line, index) => (
             <div
               key={`${props.saleId}-${line.skuId}-${line.name}-${index}`}
-              className="grid gap-2 border-b px-3 py-2 text-sm last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_0.7fr_0.8fr_0.8fr] md:items-center"
+              className="grid gap-2 border-b px-2 py-1.5 text-sm last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_0.7fr_0.8fr_0.8fr] md:items-center"
             >
               <div className="min-w-0">
                 <p className="truncate font-medium">{line.name}</p>
@@ -872,12 +1083,14 @@ function SaleItemsList(props: { saleId: string; items: SalesDetailItem[] }) {
               <MetricText
                 label="Qty"
                 value={`${number(line.quantityInput)} ${line.unitCode || "unit"}`}
+                compact
               />
               <MetricText
                 label="Dasar"
                 value={`${number(line.quantityBase)} ${line.baseUnitCode || "unit"}`}
+                compact
               />
-              <MetricText label="Total" value={currency(line.lineTotal)} />
+              <MetricText label="Total" value={currency(line.lineTotal)} compact />
             </div>
           ))}
         </div>
@@ -910,6 +1123,13 @@ function profitMargin(sales?: SalesSummary | null) {
       maximumFractionDigits: 2,
     },
   )}%`;
+}
+
+function profitMarginWidth(sales?: SalesSummary | null) {
+  const net = Number(sales?.netSales ?? 0);
+  if (!net) return 0;
+  const percent = (Number(sales?.grossProfit ?? 0) / net) * 100;
+  return Math.max(0, Math.min(100, percent));
 }
 
 function number(value?: string) {
@@ -961,6 +1181,30 @@ function saleStatusLabel(value: string) {
   return labels[value] ?? value;
 }
 
+function saleStatusClass(value: string) {
+  const classes: Record<string, string> = {
+    completed: "bg-emerald-100 text-emerald-700",
+    voided: "bg-red-100 text-red-700",
+    refunded: "bg-amber-100 text-amber-700",
+    sync_review: "bg-violet-100 text-violet-700",
+  };
+  return classes[value] ?? "bg-muted text-muted-foreground";
+}
+
+function wasteStatusClass(value: string) {
+  const normalized = value.toLowerCase();
+  if (["approved", "posted", "completed"].includes(normalized)) {
+    return "bg-emerald-100 text-emerald-700";
+  }
+  if (["rejected", "voided", "cancelled", "canceled"].includes(normalized)) {
+    return "bg-red-100 text-red-700";
+  }
+  if (["pending", "draft", "requested"].includes(normalized)) {
+    return "bg-amber-100 text-amber-700";
+  }
+  return "bg-sky-100 text-sky-700";
+}
+
 function canCorrectSale(item: SalesDetail, action: "void" | "refund") {
   if (!item.items.length) return false;
   const saleAgeHours = (Date.now() - new Date(item.createdAt).getTime()) / (1000 * 60 * 60);
@@ -972,17 +1216,22 @@ function canCorrectSale(item: SalesDetail, action: "void" | "refund") {
   });
 }
 
-function buildSalesDetailReceiptText(item: SalesDetail) {
-  const width = 32;
+function buildSalesDetailReceiptText(item: SalesDetail, layout: ReceiptSettings["receiptLayout"] | undefined) {
+  const paperWidth = layout?.paperWidth === "80" ? "80" : "58";
+  const width = paperWidth === "80" ? 42 : 28;
   const separator = "-".repeat(width);
+  const header = layout?.header?.length ? layout.header : ["logo", "outlet", "address", "cashier", "receiptNumber"];
+  const body = layout?.body?.length ? layout.body : ["items", "totals", "payment"];
+  const footer = layout?.footer?.length ? layout.footer : ["note"];
+  const footerNote = layout?.footerNote || "Terima kasih";
   const center = (value: string) => {
-    const safe = value.slice(0, width);
+    const safe = normalizeReceiptText(value).slice(0, width);
     const leftPad = Math.max(0, Math.floor((width - safe.length) / 2));
     return `${" ".repeat(leftPad)}${safe}`;
   };
   const row = (left: string, right: string) => {
-    const rightSafe = right.slice(0, width);
-    const leftSafe = left.slice(0, Math.max(0, width - rightSafe.length - 1));
+    const rightSafe = normalizeReceiptText(right).slice(0, width);
+    const leftSafe = normalizeReceiptText(left).slice(0, Math.max(0, width - rightSafe.length - 1));
     return `${leftSafe.padEnd(Math.max(0, width - rightSafe.length - 1))} ${rightSafe}`;
   };
   const cashAppliedTotal = item.payments
@@ -990,37 +1239,89 @@ function buildSalesDetailReceiptText(item: SalesDetail) {
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
   const cashDisplayTotal = Math.max(Number(item.cashTenderedTotal ?? 0), cashAppliedTotal);
   const change = Number(item.changeTotal ?? 0);
-  const lines = [
-    center(item.outletName || "Outlet"),
-    center(`Kasir: ${item.cashierName || "Kasir"}`),
-    center(`No: ${item.receiptNumber}`),
-    center(formatDate(item.createdAt)),
-    center("CETAK ULANG"),
-    separator,
-    ...item.items.flatMap((line) => [
-      line.name.slice(0, width),
-      row(`${number(line.quantityInput)} ${line.unitCode || "unit"} x ${currency(line.unitPrice)}`, currency(line.lineTotal)),
-      ...(Number(line.discountTotal ?? 0) > 0 ? [row("Diskon item", currency(line.discountTotal))] : []),
-    ]),
-    separator,
-    ...(Number(item.subtotal ?? 0) > 0 ? [row("Subtotal", currency(item.subtotal))] : []),
-    ...(Number(item.discountTotal ?? 0) > 0 ? [row("Diskon", currency(item.discountTotal))] : []),
-    ...(Number(item.taxTotal ?? 0) > 0 ? [row("Pajak", currency(item.taxTotal))] : []),
-    ...(Number(item.serviceChargeTotal ?? 0) > 0 ? [row("Service", currency(item.serviceChargeTotal))] : []),
-    ...(Number(item.donationTotal ?? 0) > 0 ? [row("Donasi", currency(item.donationTotal))] : []),
-    ...(Number(item.roundingTotal ?? 0) > 0 ? [row("Pembulatan", currency(item.roundingTotal))] : []),
-    row("TOTAL", currency(item.grandTotal)),
-    ...item.payments
-      .filter((payment) => Number(payment.amount ?? 0) > 0 && payment.method !== "cash")
-      .map((payment) => row(paymentMethodLabel(payment.method), currency(payment.amount))),
-    ...(cashDisplayTotal > 0
-      ? [row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", currency(cashDisplayTotal))]
-      : []),
-    ...(change > 0 ? [row("Kembali", currency(change))] : []),
-    separator,
-    center("Terima kasih"),
-  ];
+
+  const lines: string[] = [];
+  function renderBlock(block: string) {
+    if (block === "logo") return;
+    if (block === "outlet") lines.push(center(item.outletName || "Outlet"));
+    if (block === "address") return;
+    if (block === "cashier") lines.push(center(`Kasir: ${item.cashierName || "Kasir"}`));
+    if (block === "receiptNumber") {
+      lines.push(center(`No: ${item.receiptNumber}`));
+      lines.push(center(formatDate(item.createdAt)));
+      lines.push(center("CETAK ULANG"));
+    }
+    if (block === "items") {
+      lines.push(separator);
+      lines.push(...item.items.flatMap((line) => [
+        ...wrapReceiptLine(line.name, width),
+        ...receiptItemLine(`${number(line.quantityInput)} ${receiptUnitLabel(line.unitCode)} x ${currency(line.unitPrice)}`, currency(line.lineTotal), width, row),
+        ...(Number(line.discountTotal ?? 0) > 0 ? [row("Diskon item", currency(line.discountTotal))] : []),
+      ]));
+    }
+    if (block === "totals") {
+      lines.push(separator);
+      if (Number(item.subtotal ?? 0) > 0) lines.push(row("Subtotal", currency(item.subtotal)));
+      if (Number(item.discountTotal ?? 0) > 0) lines.push(row("Diskon", currency(item.discountTotal)));
+      if (Number(item.taxTotal ?? 0) > 0) lines.push(row("Pajak", currency(item.taxTotal)));
+      if (Number(item.serviceChargeTotal ?? 0) > 0) lines.push(row("Service", currency(item.serviceChargeTotal)));
+      if (Number(item.donationTotal ?? 0) > 0) lines.push(row("Donasi", currency(item.donationTotal)));
+      if (Number(item.roundingTotal ?? 0) > 0) lines.push(row("Pembulatan", currency(item.roundingTotal)));
+      lines.push(row("TOTAL", currency(item.grandTotal)));
+    }
+    if (block === "payment") {
+      lines.push(...item.payments
+        .filter((payment) => Number(payment.amount ?? 0) > 0 && payment.method !== "cash")
+        .map((payment) => row(paymentMethodLabel(payment.method), currency(payment.amount))));
+      if (cashDisplayTotal > 0) {
+        lines.push(row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", currency(cashDisplayTotal)));
+      }
+      if (change > 0) lines.push(row("Kembali", currency(change)));
+    }
+    if (block === "note") {
+      lines.push(separator);
+      lines.push(...receiptNoteLines(footerNote, width).map(center));
+    }
+  }
+
+  header.forEach(renderBlock);
+  body.forEach(renderBlock);
+  footer.forEach(renderBlock);
   return `${lines.join("\n")}\n`;
+}
+
+function normalizeReceiptText(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "?");
+}
+
+function wrapReceiptLine(value: string, width: number) {
+  const normalized = normalizeReceiptText(value).trim();
+  if (!normalized) return [];
+  const chunks = [];
+  for (let index = 0; index < normalized.length; index += width) {
+    chunks.push(normalized.slice(index, index + width));
+  }
+  return chunks;
+}
+
+function receiptNoteLines(value: string, width: number) {
+  const note = value.trim() ? value : "Terima kasih";
+  return note.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").flatMap((line) => {
+    const wrapped = wrapReceiptLine(line, width);
+    return wrapped.length ? wrapped : [""];
+  });
+}
+
+function receiptUnitLabel(value: string | null | undefined) {
+  const normalized = normalizeReceiptText(value || "unit").trim();
+  return normalized || "unit";
+}
+
+function receiptItemLine(left: string, right: string, width: number, row: (left: string, right: string) => string) {
+  const leftSafe = normalizeReceiptText(left).trim();
+  const rightSafe = normalizeReceiptText(right).trim();
+  if (leftSafe.length + rightSafe.length + 1 <= width) return [row(leftSafe, rightSafe)];
+  return [leftSafe.slice(0, width), row("", rightSafe)];
 }
 
 function paymentMethodLabel(method: string) {
@@ -1035,89 +1336,6 @@ function paymentMethodLabel(method: string) {
   return labels[method] ?? method;
 }
 
-async function buildReceiptLogoRasterBase64(input: {
-  logoUrl?: string | null;
-  enabled: boolean;
-  paperWidth: "58" | "80";
-}) {
-  if (!input.enabled || !input.logoUrl || typeof window === "undefined") {
-    return undefined;
-  }
-  try {
-    const image = await loadReceiptImage(input.logoUrl);
-    const printableWidth = input.paperWidth === "80" ? 576 : 384;
-    const maxLogoWidth = input.paperWidth === "80" ? 320 : 220;
-    const maxLogoHeight = 128;
-    const scale = Math.min(
-      1,
-      maxLogoWidth / image.naturalWidth,
-      maxLogoHeight / image.naturalHeight,
-    );
-    const logoWidth = Math.max(8, Math.floor(image.naturalWidth * scale));
-    const logoHeight = Math.max(8, Math.floor(image.naturalHeight * scale));
-    const centeredWidth = Math.min(printableWidth, Math.ceil(logoWidth / 8) * 8);
-    const canvas = document.createElement("canvas");
-    canvas.width = centeredWidth;
-    canvas.height = logoHeight;
-    const context = canvas.getContext("2d");
-    if (!context) return undefined;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, Math.max(0, Math.floor((centeredWidth - logoWidth) / 2)), 0, logoWidth, logoHeight);
-
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const widthBytes = Math.ceil(canvas.width / 8);
-    const raster = new Uint8Array(widthBytes * canvas.height);
-    for (let y = 0; y < canvas.height; y += 1) {
-      for (let x = 0; x < canvas.width; x += 1) {
-        const index = (y * canvas.width + x) * 4;
-        const alpha = imageData[index + 3] / 255;
-        const luminance =
-          (imageData[index] * 0.299 + imageData[index + 1] * 0.587 + imageData[index + 2] * 0.114) * alpha +
-          255 * (1 - alpha);
-        if (luminance < 170) {
-          raster[y * widthBytes + Math.floor(x / 8)] |= 0x80 >> (x % 8);
-        }
-      }
-    }
-
-    const command = new Uint8Array([
-      27, 97, 1,
-      29, 118, 48, 0,
-      widthBytes & 0xff,
-      (widthBytes >> 8) & 0xff,
-      canvas.height & 0xff,
-      (canvas.height >> 8) & 0xff,
-      ...raster,
-      10,
-      27, 97, 0,
-    ]);
-    return uint8ToBase64(command);
-  } catch {
-    return undefined;
-  }
-}
-
-function loadReceiptImage(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    if (!src.startsWith("data:")) {
-      image.crossOrigin = "anonymous";
-    }
-    image.onload = () => resolve(image);
-    image.onerror = reject;
-    image.src = src;
-  });
-}
-
-function uint8ToBase64(bytes: Uint8Array) {
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 0x8000) {
-    const chunk = bytes.subarray(index, index + 0x8000);
-    binary += String.fromCharCode(...chunk);
-  }
-  return window.btoa(binary);
-}
 
 async function requestSaleCorrectionInput(receiptNumber: string, action: "void" | "refund") {
   const isRefund = action === "refund";

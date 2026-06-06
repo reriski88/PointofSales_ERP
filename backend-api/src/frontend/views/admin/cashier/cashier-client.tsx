@@ -9,7 +9,9 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import Image from "next/image";
 import {
+  ArrowUpDown,
   Banknote,
   BadgePercent,
   Building2,
@@ -17,23 +19,21 @@ import {
   CreditCard,
   LayoutGrid,
   Minus,
-  PackageSearch,
   Plus,
   Printer,
   ReceiptText,
-  RefreshCw,
   Scale,
+  Search,
   ShoppingCart,
   Trash2,
-  Wifi,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CollapsibleSection } from "../_components/collapsible-section";
-import { ListControls } from "../_components/list-controls";
 import { SearchableSelect } from "../_components/searchable-select";
+import { printReceiptViaBrowser } from "../_components/receipt-browser-print";
 import { useRolePermissions } from "../_components/use-role-permissions";
 import { useToast } from "../_components/toast-provider";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
@@ -81,18 +81,31 @@ type ShiftSummary = {
   paymentSummary: ShiftPaymentSummary[];
   variance: number | null;
 };
+type PendingVarianceShift = {
+  id: string;
+  cashierName: string | null;
+  expectedCash: string;
+  actualCash: string | null;
+  cashVariance: string | null;
+  varianceReason: string | null;
+  closedAt: string | null;
+};
 type CatalogItem = {
   productId: string;
   productName: string;
+  productImageUrl: string | null;
   category: string | null;
   skuId: string;
   skuCode: string;
   barcode: string | null;
   skuName: string;
+  skuImageUrl: string | null;
   price: string;
   baseUnitId: string | null;
   saleUnitId: string;
   saleUnitToBaseFactor: string;
+  trackInventory: boolean;
+  quantityMode: "required" | "fixed_one";
   baseUnitCode: string | null;
   saleUnitCode: string | null;
   onHandBaseQty: string | null;
@@ -157,15 +170,21 @@ type ReceiptSettings = {
   defaultOutletLogoUrl?: string | null;
   receiptLayout?: {
     autoPrint?: boolean;
+    printMode?: "browser";
     printerName?: string;
     paperWidth?: "58" | "80";
-    header?: string[];
+    header?: ReceiptBlock[];
+    body?: ReceiptBlock[];
+    footer?: ReceiptBlock[];
     footerNote?: string;
   } | null;
 };
-type PendingSale = Record<string, unknown> & {
-  outletId?: string;
-  idempotencyKey?: string;
+type ReceiptBlock = "logo" | "outlet" | "address" | "cashier" | "receiptNumber" | "items" | "totals" | "payment" | "note";
+type ReceiptPrintLayout = {
+  paperWidth: "58" | "80";
+  header: ReceiptBlock[];
+  body: ReceiptBlock[];
+  footer: ReceiptBlock[];
 };
 type SalesSummary = {
   transactionCount: number;
@@ -214,7 +233,6 @@ type FlyingProduct = {
 };
 
 const pendingStorageKey = "pos_web_cashier_pending_sales";
-const defaultThermalPrinterName = "Thermal Bluetooth RPP02N";
 const paymentMethods = [
   { value: "cash", label: "Tunai" },
   { value: "qris", label: "QRIS" },
@@ -236,6 +254,13 @@ const wasteReasons = [
   ["stock_opname_correction", "Koreksi opname"],
   ["other", "Lainnya"],
 ] as const;
+
+function normalizeCartCustomerLabels(sessions: CartSession[]) {
+  return sessions.map((session, index) => ({
+    ...session,
+    label: `Pelanggan ${index + 1}`,
+  }));
+}
 
 export function CashierClient() {
   const access = useRolePermissions("cashier");
@@ -280,29 +305,20 @@ export function CashierClient() {
   const [activePaymentLineId, setActivePaymentLineId] = useState("payment-1");
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [activeLineDiscountSkuId, setActiveLineDiscountSkuId] = useState<string | null>(null);
-  const [pendingSales, setPendingSales] = useState<PendingSale[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const parsed = JSON.parse(
-        window.localStorage.getItem(pendingStorageKey) ?? "[]",
-      ) as PendingSale[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
   const [salesSummary, setSalesSummary] = useState<SalesSummary | null>(null);
   const [salesDetails, setSalesDetails] = useState<SalesDetail[]>([]);
+  const [pendingVarianceShifts, setPendingVarianceShifts] = useState<PendingVarianceShift[]>([]);
   const [receiptAutoPrint, setReceiptAutoPrint] = useState(false);
-  const [receiptPrinterName, setReceiptPrinterName] = useState(defaultThermalPrinterName);
   const [receiptPaperWidth, setReceiptPaperWidth] = useState<"58" | "80">("58");
   const [receiptHeader, setReceiptHeader] = useState<string[]>(["logo", "outlet", "address", "cashier", "receiptNumber"]);
   const [defaultOutletLogoUrl, setDefaultOutletLogoUrl] = useState("");
   const receiptSettingsRef = useRef({
     autoPrint: false,
-    printerName: defaultThermalPrinterName,
+    printMode: "browser" as const,
     paperWidth: "58" as "58" | "80",
-    header: ["logo", "outlet", "address", "cashier", "receiptNumber"],
+    header: ["logo", "outlet", "address", "cashier", "receiptNumber"] as ReceiptBlock[],
+    body: ["items", "totals", "payment"] as ReceiptBlock[],
+    footer: ["note"] as ReceiptBlock[],
     defaultOutletLogoUrl: "",
     footerNote: "Terima kasih",
   });
@@ -319,7 +335,6 @@ export function CashierClient() {
     | "shift"
     | "waste"
     | "reports"
-    | "sync"
     | "tools"
     | "cart"
     | null
@@ -327,6 +342,7 @@ export function CashierClient() {
   const [flyingProduct, setFlyingProduct] = useState<FlyingProduct | null>(null);
 
   const activeOutlet = outlets.find((item) => item.id === outletId) ?? null;
+  const canApproveShiftVariance = profile?.role === "owner" || profile?.role === "admin_outlet";
   const activeSession = useMemo(
     () => sessions.find((item) => item.id === activeSessionId) ?? sessions[0],
     [activeSessionId, sessions],
@@ -414,7 +430,6 @@ export function CashierClient() {
   const actualShiftCash = parseNumber(actualCash);
   const shiftCashVariance = actualShiftCash - expectedShiftCash;
   const hasShiftCashVariance = Math.abs(shiftCashVariance) >= 1;
-  const canApproveShiftVariance = profile?.role === "owner" || profile?.role === "admin_outlet";
   const shiftPaymentTotal = (shiftSummary?.paymentSummary ?? []).reduce(
     (sum, item) => sum + parseNumber(item.amount),
     0,
@@ -515,15 +530,19 @@ export function CashierClient() {
     setIsLoading(true);
     setMessage(null);
     const query = `outletId=${encodeURIComponent(nextOutletId)}`;
-    const [shiftResponse, catalogResponse, summaryResponse, detailResponse, customerResponse] =
+    const pendingVarianceRequest = canApproveShiftVariance
+      ? fetch(`/api/shifts/pending-variance?${query}`)
+      : Promise.resolve(null);
+    const [shiftResponse, catalogResponse, summaryResponse, detailResponse, customerResponse, pendingVarianceResponse] =
       await Promise.all([
         fetch(`/api/shifts/current?${query}`),
         fetch(`/api/catalog?${query}`),
         fetch(`/api/reports/sales-summary?${query}`),
         fetch(`/api/reports/sales-detail?${query}`),
         fetch("/api/customers"),
+        pendingVarianceRequest,
       ]);
-    if ([shiftResponse, catalogResponse, summaryResponse, detailResponse, customerResponse].some((r) => r.status === 401)) {
+    if ([shiftResponse, catalogResponse, summaryResponse, detailResponse, customerResponse, pendingVarianceResponse].some((r) => r?.status === 401)) {
       window.location.assign("/admin/login");
       return;
     }
@@ -544,6 +563,9 @@ export function CashierClient() {
     const nextCustomers = customerResponse.ok
       ? ((await customerResponse.json()) as ApiResponse<Customer[]>).data.filter((item) => item.isActive)
       : [];
+    const nextPendingVarianceShifts = pendingVarianceResponse?.ok
+      ? ((await pendingVarianceResponse.json()) as ApiResponse<PendingVarianceShift[]>).data
+      : [];
     if (requestId !== workspaceRequestRef.current) return;
     setShift(shiftJson.data);
     if (!shiftJson.data) {
@@ -560,6 +582,7 @@ export function CashierClient() {
     }));
     setSalesSummary(nextSalesSummary);
     setSalesDetails(nextSalesDetails ?? []);
+    setPendingVarianceShifts(nextPendingVarianceShifts);
     setCustomers(nextCustomers);
     setCustomerId((current) => (current && nextCustomers.some((item) => item.id === current) ? current : ""));
     setIsLoading(false);
@@ -584,6 +607,7 @@ export function CashierClient() {
   }
 
   useEffect(() => {
+    window.localStorage.removeItem(pendingStorageKey);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -642,11 +666,6 @@ export function CashierClient() {
     },
   });
 
-  function persistPending(next: PendingSale[]) {
-    setPendingSales(next);
-    window.localStorage.setItem(pendingStorageKey, JSON.stringify(next));
-  }
-
   async function runBusy(action: () => Promise<void>) {
     setIsBusy(true);
     try {
@@ -677,6 +696,7 @@ export function CashierClient() {
       setShiftSummary(null);
       await loadShiftSummary(json.data.id);
       notifyCashierSuccess("Shift dibuka");
+      setActiveModal(null);
     });
   }
 
@@ -714,6 +734,7 @@ export function CashierClient() {
       notifyCashierSuccess(cashMovementForm.type === "cash_in" ? "Kas masuk dicatat" : "Kas keluar dicatat");
       await loadWorkspace(outletId);
       await loadShiftSummary(shift.id);
+      setActiveModal(null);
     });
   }
 
@@ -737,12 +758,32 @@ export function CashierClient() {
         notifyCashierError("Tutup shift gagal", await readError(response, "Tutup shift gagal."));
         return;
       }
+      const json = (await response.json()) as ApiResponse<Shift>;
       setShift(null);
       setShiftSummary(null);
       setVarianceReason("");
       resetCarts();
-      notifyCashierSuccess("Shift ditutup");
+      if (json.data.closeApprovalStatus === "variance_pending") {
+        notifyCashierInfo("Shift menunggu approval", "Selisih kas sudah diajukan ke owner/admin outlet.");
+      } else {
+        notifyCashierSuccess("Shift ditutup");
+      }
       await loadWorkspace(outletId);
+      setActiveModal(null);
+    });
+  }
+
+  async function approveShiftVariance(target: PendingVarianceShift) {
+    if (!canApproveShiftVariance) return;
+    await runBusy(async () => {
+      const response = await fetch(`/api/shifts/${target.id}/approve-variance`, { method: "POST" });
+      if (!response.ok) {
+        notifyCashierError("Approve selisih gagal", await readError(response, "Approve selisih gagal."));
+        return;
+      }
+      notifyCashierSuccess("Selisih kas diapprove");
+      await loadWorkspace(outletId);
+      setActiveModal(null);
     });
   }
 
@@ -871,19 +912,22 @@ export function CashierClient() {
 
   function newSession() {
     const id = `session-${Date.now()}`;
-    setSessions((current) => [
-      ...current,
-      { id, label: `Pelanggan ${current.length + 1}`, lines: [] },
-    ]);
+    setSessions((current) => {
+      const normalized = normalizeCartCustomerLabels(current);
+      return [
+        ...normalized,
+        { id, label: `Pelanggan ${normalized.length + 1}`, lines: [] },
+      ];
+    });
     setActiveSessionId(id);
   }
 
   function closeSession() {
     if (sessions.length <= 1) {
-      setActiveLines([]);
+      setSessions((current) => normalizeCartCustomerLabels([{ ...current[0], lines: [] }]));
       return;
     }
-    const nextSessions = sessions.filter((item) => item.id !== activeSessionId);
+    const nextSessions = normalizeCartCustomerLabels(sessions.filter((item) => item.id !== activeSessionId));
     setSessions(nextSessions);
     setActiveSessionId(nextSessions[0].id);
   }
@@ -970,13 +1014,7 @@ export function CashierClient() {
         notifyCashierSuccess("Transaksi selesai");
         await loadWorkspace(outletId);
       } catch {
-        persistPending([...pendingSales, payload]);
-        if (await shouldAutoPrintReceipt()) {
-          await printReceipt(payload.receiptNumber, activeOutlet.name, payload.payments, cashTenderedTotal, changeTotal, payload.allowReceivable ? receivableTotal : 0);
-        }
-        resetCarts();
-        setActiveModal(null);
-        notifyCashierInfo("Transaksi masuk antrean sync", "Koneksi putus, transaksi disimpan ke antrean sync.");
+        notifyCashierError("Transaksi gagal", "Koneksi ke server terputus. Kasir web tidak menyimpan transaksi offline.");
       }
     });
   }
@@ -1016,17 +1054,24 @@ export function CashierClient() {
 
   function applyReceiptSettings(settings: ReceiptSettings) {
     const layout = settings.receiptLayout;
+    const sanitizedLayout = sanitizeReceiptLayout({
+      paperWidth: layout?.paperWidth === "80" ? "80" : "58",
+      header: layout?.header?.length ? layout.header : ["logo", "outlet", "address", "cashier", "receiptNumber"],
+      body: layout?.body?.length ? layout.body : ["items", "totals", "payment"],
+      footer: layout?.footer?.length ? layout.footer : ["note"],
+    });
     const nextSettings = {
       autoPrint: Boolean(layout?.autoPrint),
-      printerName: layout?.printerName?.trim() || defaultThermalPrinterName,
-      paperWidth: layout?.paperWidth === "80" ? "80" as const : "58" as const,
-      header: layout?.header?.length ? layout.header : ["logo", "outlet", "address", "cashier", "receiptNumber"],
+      printMode: "browser" as const,
+      paperWidth: sanitizedLayout.paperWidth,
+      header: sanitizedLayout.header,
+      body: sanitizedLayout.body,
+      footer: sanitizedLayout.footer,
       defaultOutletLogoUrl: settings.defaultOutletLogoUrl ?? "",
       footerNote: layout?.footerNote?.trim() || "Terima kasih",
     };
     receiptSettingsRef.current = nextSettings;
     setReceiptAutoPrint(nextSettings.autoPrint);
-    setReceiptPrinterName(nextSettings.printerName);
     setReceiptPaperWidth(nextSettings.paperWidth);
     setReceiptHeader(nextSettings.header);
     setDefaultOutletLogoUrl(nextSettings.defaultOutletLogoUrl);
@@ -1129,47 +1174,6 @@ export function CashierClient() {
     });
   }
 
-  async function syncPending() {
-    if (!pendingSales.length) {
-      notifyCashierInfo("Tidak ada antrean sync");
-      return;
-    }
-    await runBusy(async () => {
-      const completedKeys = new Set<string>();
-      const byOutlet = new Map<string, PendingSale[]>();
-      for (const sale of pendingSales) {
-        if (!sale.outletId) continue;
-        byOutlet.set(sale.outletId, [...(byOutlet.get(sale.outletId) ?? []), sale]);
-      }
-      for (const [nextOutletId, transactions] of byOutlet) {
-        const response = await fetch("/api/sync/push", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ outletId: nextOutletId, transactions }),
-        });
-        if (!response.ok) continue;
-        const json = (await response.json()) as ApiResponse<{
-          results: Array<{ idempotencyKey: string; status: string }>;
-        }>;
-        for (const result of json.data.results) {
-          if (result.status === "processed") {
-            completedKeys.add(result.idempotencyKey);
-          }
-        }
-      }
-      const nextPending = pendingSales.filter(
-        (sale) => !completedKeys.has(sale.idempotencyKey ?? ""),
-      );
-      persistPending(nextPending);
-      if (nextPending.length) {
-        notifyCashierInfo("Sync sebagian selesai", `${completedKeys.size} transaksi tersync, ${nextPending.length} masih antre.`);
-      } else {
-        notifyCashierSuccess("Semua antrean sync selesai");
-      }
-      await loadWorkspace(outletId);
-    });
-  }
-
   async function submitWaste(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedWasteItem?.baseUnitId) {
@@ -1203,9 +1207,9 @@ export function CashierClient() {
         return;
       }
       setWasteForm((current) => ({ ...current, quantity: "", note: "" }));
-      setActiveModal(null);
       notifyCashierSuccess("Remahan dicatat", "Stok diperbarui.");
       await loadWorkspace(outletId);
+      setActiveModal(null);
     });
   }
 
@@ -1259,17 +1263,13 @@ export function CashierClient() {
     receivableAmount: number,
   ) {
     const printSettings = receiptSettingsRef.current;
-    const printerName = printSettings.printerName || receiptPrinterName || defaultThermalPrinterName;
-    const logoRasterBase64 = await buildReceiptLogoRasterBase64({
-      logoUrl: activeOutlet?.logoUrl || printSettings.defaultOutletLogoUrl || defaultOutletLogoUrl,
-      enabled: printSettings.header.includes("logo") || receiptHeader.includes("logo"),
-      paperWidth: printSettings.paperWidth || receiptPaperWidth,
-    });
     const text = buildReceiptText({
       receiptNumber,
       outletName,
+      outletAddress: activeOutlet?.address ?? "",
       cashierName: profile?.name ?? "Kasir",
       footerNote: printSettings.footerNote || "Terima kasih",
+      layout: printSettings,
       lines: cart,
       subtotal,
       discount: discountTotal,
@@ -1284,56 +1284,37 @@ export function CashierClient() {
       receivableAmount,
     });
     try {
-      const response = await fetch("/api/print/receipt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          printerName,
-          text,
-          logoRasterBase64,
-        }),
+      await printReceiptViaBrowser(text, {
+        title: `Struk ${receiptNumber}`,
+        paperWidth: printSettings.paperWidth || receiptPaperWidth,
+        logoUrl: activeOutlet?.logoUrl || printSettings.defaultOutletLogoUrl || defaultOutletLogoUrl,
+        showLogo: receiptLayoutHasBlock(printSettings, "logo") || receiptHeader.includes("logo"),
       });
-      if (!response.ok) {
-        const error = await readError(response, "Print struk gagal.");
-        notifyCashierError("Print struk gagal", error);
-        return;
-      }
-      notifyCashierSuccess("Struk dicetak", `Terkirim ke printer ${printerName}.`);
+      notifyCashierSuccess("Dialog print dibuka", "Pilih printer dari browser.");
     } catch {
-      const error = `Print struk gagal. Server lokal tidak dapat menghubungi printer ${printerName}.`;
-      notifyCashierError("Print struk gagal", error);
+      notifyCashierError("Print struk gagal", "Browser belum bisa membuka dialog print.");
     }
   }
 
   async function reprintSalesDetail(sale: SalesDetail) {
     const printSettings = receiptSettingsRef.current;
-    const printerName = printSettings.printerName || receiptPrinterName || defaultThermalPrinterName;
-    const logoRasterBase64 = await buildReceiptLogoRasterBase64({
-      logoUrl: sale.outletLogoUrl || activeOutlet?.logoUrl || printSettings.defaultOutletLogoUrl || defaultOutletLogoUrl,
-      enabled: printSettings.header.includes("logo") || receiptHeader.includes("logo"),
-      paperWidth: printSettings.paperWidth || receiptPaperWidth,
-    });
+    const text = buildSalesDetailReprintText(
+      sale,
+      activeOutlet?.name ?? "Outlet",
+      activeOutlet?.address ?? "",
+      printSettings,
+      printSettings.footerNote || "Terima kasih",
+    );
     try {
-      const response = await fetch("/api/print/receipt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          printerName,
-          text: buildSalesDetailReprintText(
-            sale,
-            activeOutlet?.name ?? "Outlet",
-            printSettings.footerNote || "Terima kasih",
-          ),
-          logoRasterBase64,
-        }),
+      await printReceiptViaBrowser(text, {
+        title: `Cetak ulang ${sale.receiptNumber}`,
+        paperWidth: printSettings.paperWidth || receiptPaperWidth,
+        logoUrl: sale.outletLogoUrl || activeOutlet?.logoUrl || printSettings.defaultOutletLogoUrl || defaultOutletLogoUrl,
+        showLogo: receiptLayoutHasBlock(printSettings, "logo") || receiptHeader.includes("logo"),
       });
-      if (!response.ok) {
-        notifyCashierError("Cetak ulang gagal", await readError(response, "Cetak ulang struk gagal."));
-        return;
-      }
-      notifyCashierSuccess("Struk dicetak ulang", `${sale.receiptNumber} terkirim ke printer ${printerName}.`);
+      notifyCashierSuccess("Dialog print dibuka", "Pilih printer dari browser.");
     } catch {
-      notifyCashierError("Cetak ulang gagal", `Server lokal tidak dapat menghubungi printer ${printerName}.`);
+      notifyCashierError("Cetak ulang gagal", "Browser belum bisa membuka dialog print.");
     }
   }
 
@@ -1470,18 +1451,18 @@ export function CashierClient() {
 
   function renderCartBody() {
     return (
-      <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_370px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_410px]">
         <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-4">
-          <section className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3">
+          <section className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3 shadow-sm">
             <div className="flex flex-wrap gap-2">
               {sessions.map((session) => (
                 <button
                   type="button"
                   key={session.id}
-                  className={`rounded-md border px-3 py-2 text-sm font-medium ${
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition-all hover:-translate-y-0.5 hover:shadow-sm ${
                     session.id === activeSessionId
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-card"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-background hover:bg-muted/40"
                   }`}
                   onClick={() => setActiveSessionId(session.id)}
                 >
@@ -1500,44 +1481,68 @@ export function CashierClient() {
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col rounded-lg border bg-background">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 [scrollbar-width:thin]">
             {cart.map((line) => {
               const lineDiscount = lineDiscountTotal(line);
+              const imageUrl = line.item.skuImageUrl || line.item.productImageUrl;
               const showLineDiscount =
                 activeLineDiscountSkuId === line.item.skuId || lineDiscount > 0;
 
               return (
-                <div key={line.item.skuId} className="rounded-lg border bg-card p-3">
+                <div key={line.item.skuId} className="rounded-xl border bg-background p-3 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5">
                   <div className="grid gap-3 lg:grid-cols-[minmax(15rem,1fr)_8rem_10rem_auto] lg:items-center">
-                    <div className="min-w-0">
-                      <p className="break-words font-medium leading-snug">
-                        {line.item.skuName}
-                      </p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {money(line.unitPrice)} / {line.unitLabel}
-                      </p>
-                      {lineDiscount > 0 ? (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Diskon item {money(lineDiscount)}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border bg-muted/40">
+                        <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                          <LayoutGrid className="h-4 w-4" />
+                        </div>
+                        {imageUrl ? (
+                          <Image
+                            src={imageUrl}
+                            alt={line.item.skuName}
+                            width={48}
+                            height={48}
+                            unoptimized
+                            className="relative h-full w-full object-cover"
+                            loading="lazy"
+                            onError={(event) => {
+                              event.currentTarget.style.opacity = "0";
+                            }}
+                          />
+                        ) : null}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="break-words font-medium leading-snug">
+                          {line.item.skuName}
                         </p>
-                      ) : null}
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {money(line.unitPrice)} / {line.unitLabel}
+                        </p>
+                        {lineDiscount > 0 ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Diskon item {money(lineDiscount)}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex items-center">
-                      <SearchableSelect
-                        value={line.unitId}
-                        onChange={(value) => changeUnit(line, value)}
-                        ariaLabel={`Satuan ${line.item.skuName}`}
-                        options={unitChoices(line.item).map((unit) => ({
-                          value: unit.id,
-                          label: unit.label,
-                        }))}
-                        placeholder="Satuan"
-                        searchPlaceholder="Cari satuan..."
-                        emptyText="Satuan tidak ditemukan."
-                        triggerClassName="h-9 px-2 py-1"
-                      />
-                    </div>
+                    {line.item.trackInventory === false ? null : (
+                      <div className="flex items-center">
+                        <SearchableSelect
+                          value={line.unitId}
+                          onChange={(value) => changeUnit(line, value)}
+                          ariaLabel={`Satuan ${line.item.skuName}`}
+                          options={unitChoices(line.item).map((unit) => ({
+                            value: unit.id,
+                            label: unit.label,
+                          }))}
+                          placeholder="Satuan"
+                          searchPlaceholder="Cari satuan..."
+                          emptyText="Satuan tidak ditemukan."
+                          triggerClassName="h-9 px-2 py-1"
+                        />
+                      </div>
+                    )}
                     <div className="flex items-center">
                       <div className="grid grid-cols-[2.25rem_1fr_2.25rem] items-center gap-1">
                         <Button
@@ -1580,7 +1585,7 @@ export function CashierClient() {
                       <button
                         type="button"
                         className={`inline-flex h-9 w-9 items-center justify-center rounded-md border hover:bg-muted ${
-                          showLineDiscount ? "border-primary text-primary" : ""
+                          showLineDiscount ? "border-primary bg-primary/10 text-primary" : "text-amber-700 hover:bg-amber-50"
                         }`}
                         onClick={() =>
                           setActiveLineDiscountSkuId(
@@ -1594,7 +1599,7 @@ export function CashierClient() {
                       </button>
                       <button
                         type="button"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border hover:bg-muted"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border text-red-600 hover:bg-red-50 hover:text-red-700"
                         onClick={() => changeQuantity(line, 0)}
                         aria-label="Hapus item"
                         title="Hapus item"
@@ -1622,7 +1627,7 @@ export function CashierClient() {
               );
             })}
             {!cart.length ? (
-              <div className="flex min-h-72 items-center justify-center rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+              <div className="flex min-h-72 items-center justify-center rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
                 Keranjang masih kosong.
               </div>
             ) : null}
@@ -1630,7 +1635,7 @@ export function CashierClient() {
           </section>
         </div>
 
-          <aside className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-lg border bg-background p-3">
+          <aside className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-xl border bg-card p-3 shadow-sm">
           <div className="grid shrink-0 gap-2">
             <div className="space-y-1.5">
               <Label>Pelanggan</Label>
@@ -1675,7 +1680,7 @@ export function CashierClient() {
           </div>
           <div className="min-h-0 overflow-hidden">
             <div className="grid gap-2">
-              <div className="rounded-md border bg-muted/10 p-2.5">
+              <div className="rounded-xl border bg-background p-3 shadow-sm">
                 <div className="mb-1.5">
                   <p className="text-sm font-semibold">Ringkasan</p>
                 </div>
@@ -1696,7 +1701,7 @@ export function CashierClient() {
                     </p>
                   ) : null}
                   {saleQuote?.appliedPromotions.length ? (
-                    <div className="rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground">
+                    <div className="rounded-md border bg-emerald-50 px-2 py-1.5 text-xs text-emerald-800">
                       <span className="font-medium text-foreground">Promo: </span>
                       {saleQuote.appliedPromotions.map((promo) => promo.name).join(", ")}
                     </div>
@@ -1743,7 +1748,7 @@ export function CashierClient() {
         actions={
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             <div
-              className="flex h-10 max-w-[14rem] items-center gap-2 rounded-full border bg-background px-3 text-sm font-semibold shadow-sm"
+              className="flex h-10 max-w-[14rem] items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 text-sm font-semibold text-blue-800 shadow-sm"
               title={`Outlet aktif dari sidebar: ${activeOutlet?.name ?? "-"}`}
             >
               <Building2 className="h-4 w-4 shrink-0 text-primary" />
@@ -1751,7 +1756,7 @@ export function CashierClient() {
             </div>
             <button
               type="button"
-              className="flex h-10 max-w-[12rem] items-center gap-2 rounded-full border bg-background px-3 text-sm font-semibold shadow-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`flex h-10 max-w-[12rem] items-center gap-2 rounded-full border px-3 text-sm font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${shift ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" : "border-red-200 bg-red-50 text-red-800 hover:bg-red-100"}`}
               onClick={() => setActiveModal("shift")}
               title={`Shift ${shift ? "Open" : "Closed"} - kas ${money(shift?.expectedCash ?? 0)}`}
               aria-label="Buka setting shift kasir"
@@ -1767,47 +1772,90 @@ export function CashierClient() {
           </div>
         }
       >
-          <ListControls
-            search={search}
-            onSearchChange={setSearch}
-            searchPlaceholder="Cari produk, SKU, barcode..."
-            filters={[
-              {
-                label: "Kategori",
-                value: category,
-                onChange: setCategory,
-                options: categories.map((item) => ({ value: item, label: item })),
-              },
-            ]}
-            sort="name"
-            onSortChange={() => undefined}
-            sortOptions={[{ value: "name", label: "Nama produk" }]}
-          />
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          <div data-tour="list-controls" className="rounded-xl border bg-background p-2 shadow-sm">
+            <div className="grid gap-2 lg:grid-cols-[minmax(18rem,1fr)_11rem_11rem] lg:items-center">
+              <div className="relative min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="h-9 rounded-lg border-muted-foreground/20 bg-muted/20 pl-9 text-sm shadow-none focus-visible:bg-background"
+                  value={search}
+                  placeholder="Cari produk, SKU, barcode..."
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+              <SearchableSelect
+                className="h-9 rounded-lg bg-muted/20"
+                value={category}
+                onChange={setCategory}
+                options={categories.map((item) => ({ value: item, label: item }))}
+                placeholder="Kategori"
+                searchPlaceholder="Cari kategori..."
+                emptyText="Kategori tidak ditemukan."
+              />
+              <div className="relative min-w-0">
+                <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <select
+                  className="flex h-9 w-full rounded-lg border border-muted-foreground/20 bg-muted/20 py-1 pl-9 pr-3 text-sm font-medium outline-none focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring"
+                  value="name"
+                  onChange={() => undefined}
+                >
+                  <option value="name">Nama produk</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-6">
             {visibleCatalog.map((item) => {
               const available = availableBaseQty(item);
+              const imageUrl = item.skuImageUrl || item.productImageUrl;
+              const stockTone = item.trackInventory === false ? "text-sky-700 bg-sky-50 border-sky-200" : available <= 0 ? "text-red-700 bg-red-50 border-red-200" : available <= 5 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-emerald-700 bg-emerald-50 border-emerald-200";
               return (
                 <button
                   type="button"
                   key={item.skuId}
-                  className="flex min-h-40 flex-col justify-between rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary hover:bg-muted/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="group relative flex min-h-32 flex-col justify-between overflow-hidden rounded-lg border bg-background p-2.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
                   onClick={(event) => addToCart(item, event)}
-                  disabled={!shift || available <= 0}
+                  disabled={!shift || (item.trackInventory !== false && available <= 0)}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold">{item.skuName}</p>
-                      <p className="truncate text-sm text-muted-foreground">
-                        {item.skuCode} - {item.productName}
+                  <span className={`absolute inset-x-0 top-0 h-1 ${item.trackInventory === false ? "bg-sky-500" : available <= 0 ? "bg-red-500" : available <= 5 ? "bg-amber-500" : "bg-emerald-500"}`} />
+                  <div className="flex items-start gap-2 pt-1">
+                    <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-muted/40">
+                      <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                        <LayoutGrid className="h-5 w-5" />
+                      </div>
+                      {imageUrl ? (
+                        <Image
+                          src={imageUrl}
+                          alt={item.skuName}
+                          width={56}
+                          height={56}
+                          unoptimized
+                          className="relative h-full w-full object-cover transition-transform group-hover:scale-105"
+                          loading="lazy"
+                          onError={(event) => {
+                            event.currentTarget.style.opacity = "0";
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-sm font-semibold leading-tight">{item.skuName}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {item.productName}
                       </p>
                     </div>
-                    <PackageSearch className="h-5 w-5 shrink-0 text-primary" />
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <span>{money(item.price)}</span>
-                    <span className="text-right text-muted-foreground">
-                      Tersedia {qty(available)} {item.baseUnitCode || "unit"}
+                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#E63946] text-white shadow-sm transition-transform group-hover:scale-105">
+                      <Plus className="h-3.5 w-3.5" />
                     </span>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">{item.skuCode}</span>
+                      <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${stockTone}`}>
+                        {item.trackInventory === false ? "Non-stok" : available <= 0 ? "Habis" : `${qty(available)} ${item.baseUnitCode || "unit"}`}
+                      </span>
+                    </div>
+                    <p className="truncate text-sm font-bold text-[#1D3557]">{money(item.price)}</p>
                   </div>
                 </button>
               );
@@ -1822,31 +1870,93 @@ export function CashierClient() {
         title="Shift Outlet"
         open={activeModal === "shift"}
         onClose={() => setActiveModal(null)}
-        maxWidthClassName="max-w-6xl"
+        maxWidthClassName="max-w-5xl"
       >
-        <div className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
-          <section className="rounded-lg border bg-background p-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Metric icon={Clock} label="Status Shift" value={shift ? "Open" : "Closed"} />
-              <Metric icon={Banknote} label="Kas Ekspektasi" value={money(shift?.expectedCash ?? 0)} />
-              <Metric icon={Banknote} label="Kas Masuk" value={money(shiftSummary?.shift.cashInTotal ?? shift?.cashInTotal ?? 0)} />
-              <Metric icon={Banknote} label="Kas Keluar" value={money(shiftSummary?.shift.cashOutTotal ?? shift?.cashOutTotal ?? 0)} />
+        <div className="space-y-4">
+          <section className="grid gap-3 md:grid-cols-4">
+            <div className={`rounded-xl border p-3 ${shift ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-200 bg-red-50 text-red-900"}`}>
+              <p className="text-xs font-medium opacity-75">Status</p>
+              <p className="mt-1 text-lg font-bold">{shift ? "Open" : "Closed"}</p>
+            </div>
+            <div className="rounded-xl border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Kas Ekspektasi</p>
+              <p className="mt-1 text-lg font-bold text-[#1D3557]">{money(shift?.expectedCash ?? 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Kas Masuk</p>
+              <p className="mt-1 text-lg font-bold text-emerald-700">{money(shiftSummary?.shift.cashInTotal ?? shift?.cashInTotal ?? 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Kas Keluar</p>
+              <p className="mt-1 text-lg font-bold text-amber-700">{money(shiftSummary?.shift.cashOutTotal ?? shift?.cashOutTotal ?? 0)}</p>
+            </div>
+          </section>
+
+          <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+            <div className="space-y-4">
+              <div className="rounded-xl border bg-background p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">Buka Shift</p>
+                    <p className="text-xs text-muted-foreground">Isi kas awal sebelum transaksi.</p>
+                  </div>
+                  <Clock className="h-5 w-5 text-blue-700" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <Field label="Kas Awal" value={openingCash} onChange={(value) => setOpeningCash(formatNumberInput(value))} />
+                  <Button type="button" onClick={() => void openShift()} disabled={isBusy || Boolean(shift)}>
+                    <Clock className="h-4 w-4" />
+                    Buka Shift
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-background p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">Tutup Shift</p>
+                    <p className="text-xs text-muted-foreground">Cocokkan kas fisik dengan kas sistem.</p>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${hasShiftCashVariance ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                    {hasShiftCashVariance ? "Ada selisih" : "Seimbang"}
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[1fr_8rem_auto] sm:items-end">
+                  <Field label="Kas Aktual" value={actualCash} onChange={(value) => setActualCash(formatNumberInput(value))} />
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-xs text-muted-foreground">Selisih</p>
+                    <p className={`mt-1 text-sm font-bold ${hasShiftCashVariance ? "text-amber-700" : "text-emerald-700"}`}>
+                      {money(shiftCashVariance)}
+                    </p>
+                  </div>
+                  <Button type="button" variant="secondary" onClick={() => void closeShift()} disabled={isBusy || !shift}>
+                    <Clock className="h-4 w-4" />
+                    Tutup
+                  </Button>
+                </div>
+                {hasShiftCashVariance ? (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-medium">
+                      {canApproveShiftVariance
+                        ? "Selisih akan ditutup dengan approval supervisor/admin."
+                        : "Shift tetap bisa ditutup. Selisih akan menunggu approval owner/admin outlet."}
+                    </p>
+                    <div className="mt-2 space-y-1.5">
+                      <Label>Alasan selisih</Label>
+                      <Input value={varianceReason} onChange={(event) => setVarianceReason(event.target.value)} placeholder="Contoh: uang setor sudah diambil supervisor" />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <Field label="Kas Awal" value={openingCash} onChange={(value) => setOpeningCash(formatNumberInput(value))} />
-              <Button type="button" className="self-end" onClick={() => void openShift()} disabled={isBusy || Boolean(shift)}>
-                <Clock className="h-4 w-4" />
-                Buka Shift
-              </Button>
-            </div>
-
-            <div className="mt-4 rounded-md border bg-muted/10 p-3">
-              <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="rounded-xl border bg-background p-4">
+              <div className="mb-3 flex items-start justify-between gap-3">
                 <div>
                   <p className="font-semibold">Kas Masuk / Keluar</p>
                   <p className="text-xs text-muted-foreground">Untuk tambah uang laci, ambil uang setor, atau kebutuhan operasional.</p>
                 </div>
+                <Banknote className="h-5 w-5 text-emerald-700" />
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <SelectField
@@ -1887,47 +1997,8 @@ export function CashierClient() {
             </div>
           </section>
 
-          <section className="grid gap-4">
-            <div className="rounded-lg border bg-background p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-semibold">Closing Shift</p>
-                  <p className="text-xs text-muted-foreground">Hitung uang tunai fisik lalu cocokkan dengan kas ekspektasi.</p>
-                </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${hasShiftCashVariance ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
-                  {hasShiftCashVariance ? "Ada selisih" : "Seimbang"}
-                </span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="Kas Aktual Tutup" value={actualCash} onChange={(value) => setActualCash(formatNumberInput(value))} />
-                <div className="rounded-md border p-3">
-                  <p className="text-sm text-muted-foreground">Selisih</p>
-                  <p className={`mt-1 text-lg font-semibold ${hasShiftCashVariance ? "text-amber-700" : "text-emerald-700"}`}>
-                    {money(shiftCashVariance)}
-                  </p>
-                </div>
-                <Button type="button" variant="secondary" className="self-end" onClick={() => void closeShift()} disabled={isBusy || !shift}>
-                  <Clock className="h-4 w-4" />
-                  Tutup Shift
-                </Button>
-              </div>
-              {hasShiftCashVariance ? (
-                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  <p className="font-medium">
-                    {canApproveShiftVariance
-                      ? "Selisih akan ditutup dengan approval supervisor/admin."
-                      : "Shift bermasalah wajib ditutup oleh supervisor/admin."}
-                  </p>
-                  <div className="mt-2 space-y-1.5">
-                    <Label>Alasan selisih</Label>
-                    <Input value={varianceReason} onChange={(event) => setVarianceReason(event.target.value)} placeholder="Contoh: uang setor sudah diambil supervisor" />
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-lg border bg-background p-4">
+          <section className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border bg-background p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <p className="font-semibold">Pembayaran Shift</p>
                   <span className="text-sm font-semibold">{money(shiftPaymentTotal)}</span>
@@ -1948,7 +2019,7 @@ export function CashierClient() {
                 </div>
               </div>
 
-              <div className="rounded-lg border bg-background p-4">
+              <div className="rounded-xl border bg-background p-4">
                 <p className="mb-3 font-semibold">Riwayat Mutasi Kas</p>
                 <div className="max-h-64 space-y-2 overflow-y-auto pr-1 [scrollbar-width:thin]">
                   {(shiftSummary?.cashMovements ?? []).map((item) => (
@@ -1970,36 +2041,7 @@ export function CashierClient() {
                   ) : null}
                 </div>
               </div>
-            </div>
           </section>
-        </div>
-      </CashierModal>
-
-      <CashierModal
-        title="Sync Transaksi Offline"
-        open={activeModal === "sync"}
-        onClose={() => setActiveModal(null)}
-      >
-        <div className="grid gap-4 md:grid-cols-2">
-          <Metric icon={Wifi} label="Antrean" value={`${pendingSales.length} transaksi`} />
-          <Metric icon={ShoppingCart} label="Outlet Aktif" value={activeOutlet?.name ?? "-"} />
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button type="button" onClick={() => void syncPending()} disabled={isBusy || !pendingSales.length}>
-            <RefreshCw className="h-4 w-4" />
-            Sync Sekarang
-          </Button>
-        </div>
-        <div className="mt-4 space-y-2">
-          {pendingSales.slice(0, 8).map((sale, index) => (
-            <div key={`${sale.idempotencyKey ?? index}`} className="rounded-md border p-3 text-sm">
-              <p className="font-medium">{sale.receiptNumber?.toString() ?? sale.idempotencyKey ?? "Pending sale"}</p>
-              <p className="text-muted-foreground">{sale.outletId ?? "-"}</p>
-            </div>
-          ))}
-          {!pendingSales.length ? (
-            <p className="text-sm text-muted-foreground">Tidak ada antrean sync.</p>
-          ) : null}
         </div>
       </CashierModal>
 
@@ -2085,18 +2127,16 @@ export function CashierClient() {
         open={activeModal === "tools"}
         onClose={() => setActiveModal(null)}
       >
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="mb-4 rounded-xl border bg-muted/20 p-4">
+          <p className="text-sm font-semibold text-foreground">Aksi Operasional Kasir</p>
+          <p className="mt-1 text-xs text-muted-foreground">Buka shift, input remahan, dan laporan harian dari satu panel.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
           <ToolButton
             icon={Clock}
             title="Shift Outlet"
             subtitle={shift ? "Shift sedang open" : "Buka shift sebelum transaksi"}
             onClick={() => setActiveModal("shift")}
-          />
-          <ToolButton
-            icon={Wifi}
-            title="Sync Offline"
-            subtitle={`${pendingSales.length} transaksi antre`}
-            onClick={() => setActiveModal("sync")}
           />
           <ToolButton
             icon={Scale}
@@ -2111,6 +2151,38 @@ export function CashierClient() {
             onClick={() => setActiveModal("reports")}
           />
         </div>
+        {canApproveShiftVariance && pendingVarianceShifts.length ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-amber-900">Approval Selisih Kas</p>
+                <p className="mt-1 text-xs text-amber-800">Shift kasir dengan selisih menunggu approval owner/admin outlet.</p>
+              </div>
+              <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">{pendingVarianceShifts.length}</span>
+            </div>
+            <div className="space-y-2">
+              {pendingVarianceShifts.map((item) => (
+                <div key={item.id} className="rounded-lg border bg-background p-3 shadow-sm">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{item.cashierName || "Kasir"}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{item.closedAt ? formatDate(item.closedAt) : "-"}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">Alasan: {item.varianceReason || "-"}</p>
+                    </div>
+                    <div className="grid shrink-0 grid-cols-3 gap-2 text-right text-xs">
+                      <div><p className="text-muted-foreground">Sistem</p><p className="font-semibold">{money(item.expectedCash)}</p></div>
+                      <div><p className="text-muted-foreground">Aktual</p><p className="font-semibold">{money(item.actualCash ?? 0)}</p></div>
+                      <div><p className="text-muted-foreground">Selisih</p><p className="font-semibold text-amber-700">{money(item.cashVariance ?? 0)}</p></div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <Button type="button" size="sm" disabled={isBusy} onClick={() => void approveShiftVariance(item)}>Approve Selisih</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </CashierModal>
 
       <CashierModal
@@ -2138,7 +2210,7 @@ export function CashierClient() {
       <div className="fixed bottom-4 left-4 right-4 z-40 flex items-end justify-end gap-2 sm:bottom-6 sm:right-6">
         <button
           type="button"
-          className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#1D3557] text-white shadow-xl ring-1 ring-black/10 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#1D3557] text-white shadow-xl ring-1 ring-black/10 transition-all hover:-translate-y-0.5 hover:scale-105 hover:bg-[#25466f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setActiveModal("tools")}
           aria-label="Buka menu pendukung"
         >
@@ -2146,34 +2218,10 @@ export function CashierClient() {
         </button>
 
       <div className="flex w-[min(23rem,calc(100vw-9rem))] min-w-0 flex-col items-stretch gap-2">
-        {cart.length ? (
-          <div className="max-h-[42vh] space-y-2 overflow-y-auto rounded-2xl border bg-card/95 p-2 shadow-xl backdrop-blur [scrollbar-width:thin]">
-            {cart.map((line) => (
-              <button
-                type="button"
-                key={`fab-${line.item.skuId}`}
-                className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-xl bg-background px-3 py-2 text-left text-sm shadow-sm ring-1 ring-border transition-colors hover:bg-muted"
-                onClick={() => setActiveModal("cart")}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-semibold">
-                    {line.item.skuName}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {qty(line.quantity)} {line.unitLabel}
-                  </span>
-                </span>
-                <span className="self-center font-semibold">
-                  {money(line.quantity * line.unitPrice)}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
         <button
           ref={cartFabRef}
           type="button"
-          className="flex h-14 items-center justify-between gap-3 rounded-full bg-[#E63946] px-4 text-white shadow-xl ring-1 ring-black/10 transition-all hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-14 items-center justify-between gap-3 rounded-full bg-[#E63946] px-4 text-white shadow-xl ring-1 ring-black/10 transition-all hover:-translate-y-0.5 hover:scale-[1.02] hover:bg-[#d92f3c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setActiveModal("cart")}
           aria-label="Buka keranjang"
         >
@@ -2241,7 +2289,7 @@ function CashierModal(props: {
       />
       <div
         className={[
-          "relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-lg border bg-card shadow-2xl sm:max-h-[calc(100vh-3rem)]",
+          "relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-xl border bg-card shadow-2xl sm:max-h-[calc(100vh-3rem)]",
           props.maxWidthClassName ?? "max-w-4xl",
         ].join(" ")}
       >
@@ -2276,13 +2324,14 @@ function ToolButton(props: {
   subtitle: string;
   onClick: () => void;
 }) {
+  const tone = toolTone(props.title);
   return (
     <button
       type="button"
-      className="flex items-center gap-3 rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary hover:bg-muted/30"
+      className={`group flex items-center gap-3 rounded-xl border bg-background p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${tone.border} ${tone.hover}`}
       onClick={props.onClick}
     >
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg transition-colors ${tone.icon}`}>
         <props.icon className="h-5 w-5" />
       </span>
       <span className="min-w-0">
@@ -2293,6 +2342,13 @@ function ToolButton(props: {
       </span>
     </button>
   );
+}
+
+function toolTone(title: string) {
+  if (title.includes("Shift")) return { border: "hover:border-blue-300", hover: "hover:bg-blue-50/60", icon: "bg-blue-100 text-blue-700 group-hover:bg-blue-600 group-hover:text-white" };
+  if (title.includes("Sync")) return { border: "hover:border-violet-300", hover: "hover:bg-violet-50/60", icon: "bg-violet-100 text-violet-700 group-hover:bg-violet-600 group-hover:text-white" };
+  if (title.includes("Remahan")) return { border: "hover:border-amber-300", hover: "hover:bg-amber-50/60", icon: "bg-amber-100 text-amber-700 group-hover:bg-amber-600 group-hover:text-white" };
+  return { border: "hover:border-emerald-300", hover: "hover:bg-emerald-50/60", icon: "bg-emerald-100 text-emerald-700 group-hover:bg-emerald-600 group-hover:text-white" };
 }
 
 function Field(props: {
@@ -2337,10 +2393,39 @@ function SelectField(props: {
 
 function Metric(props: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
   return (
-    <div className="rounded-lg border p-4">
-      <props.icon className="mb-3 h-5 w-5 text-primary" />
+    <div className="rounded-xl border bg-background p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <span className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <props.icon className="h-5 w-5" />
+      </span>
       <p className="text-sm text-muted-foreground">{props.label}</p>
       <p className="mt-1 text-xl font-semibold">{props.value}</p>
+    </div>
+  );
+}
+
+function CashierStat(props: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: "blue" | "rose" | "emerald" | "amber";
+}) {
+  const tone = {
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+  }[props.tone];
+  return (
+    <div className="rounded-xl border bg-background p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-xs text-muted-foreground">{props.label}</p>
+          <p className="mt-1 truncate text-base font-semibold text-foreground">{props.value}</p>
+        </div>
+        <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${tone}`}>
+          <props.icon className="h-4 w-4" />
+        </span>
+      </div>
     </div>
   );
 }
@@ -2367,6 +2452,7 @@ function unitChoices(item: CatalogItem): UnitChoice[] {
 }
 
 function availableBaseQty(item: CatalogItem) {
+  if (item.trackInventory === false) return Number.POSITIVE_INFINITY;
   return Math.max(
     0,
     parseDecimalNumber(item.onHandBaseQty ?? 0) -
@@ -2376,6 +2462,7 @@ function availableBaseQty(item: CatalogItem) {
 }
 
 function stockLimitMessage(line: CartLine, quantity: number) {
+  if (line.item.trackInventory === false) return null;
   if (quantity <= 0) return null;
   const available = availableBaseQty(line.item);
   if (quantity * line.unitToBaseFactor <= available + 0.000001) return null;
@@ -2509,6 +2596,21 @@ function formatDate(value: string) {
   });
 }
 
+function receiptDateLabel(value: string) {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")}`;
+}
+
 async function readError(response: Response, fallback: string) {
   try {
     const json = (await response.json()) as { error?: { message?: string } };
@@ -2518,95 +2620,13 @@ async function readError(response: Response, fallback: string) {
   }
 }
 
-async function buildReceiptLogoRasterBase64(input: {
-  logoUrl?: string | null;
-  enabled: boolean;
-  paperWidth: "58" | "80";
-}) {
-  if (!input.enabled || !input.logoUrl || typeof window === "undefined") {
-    return undefined;
-  }
-  try {
-    const image = await loadReceiptImage(input.logoUrl);
-    const printableWidth = input.paperWidth === "80" ? 576 : 384;
-    const maxLogoWidth = input.paperWidth === "80" ? 320 : 220;
-    const maxLogoHeight = 128;
-    const scale = Math.min(
-      1,
-      maxLogoWidth / image.naturalWidth,
-      maxLogoHeight / image.naturalHeight,
-    );
-    const logoWidth = Math.max(8, Math.floor(image.naturalWidth * scale));
-    const logoHeight = Math.max(8, Math.floor(image.naturalHeight * scale));
-    const centeredWidth = Math.min(printableWidth, Math.ceil(logoWidth / 8) * 8);
-    const canvas = document.createElement("canvas");
-    canvas.width = centeredWidth;
-    canvas.height = logoHeight;
-    const context = canvas.getContext("2d");
-    if (!context) return undefined;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, Math.max(0, Math.floor((centeredWidth - logoWidth) / 2)), 0, logoWidth, logoHeight);
-
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const widthBytes = Math.ceil(canvas.width / 8);
-    const raster = new Uint8Array(widthBytes * canvas.height);
-    for (let y = 0; y < canvas.height; y += 1) {
-      for (let x = 0; x < canvas.width; x += 1) {
-        const index = (y * canvas.width + x) * 4;
-        const alpha = imageData[index + 3] / 255;
-        const luminance =
-          (imageData[index] * 0.299 + imageData[index + 1] * 0.587 + imageData[index + 2] * 0.114) * alpha +
-          255 * (1 - alpha);
-        if (luminance < 170) {
-          raster[y * widthBytes + Math.floor(x / 8)] |= 0x80 >> (x % 8);
-        }
-      }
-    }
-
-    const command = new Uint8Array([
-      27, 97, 1,
-      29, 118, 48, 0,
-      widthBytes & 0xff,
-      (widthBytes >> 8) & 0xff,
-      canvas.height & 0xff,
-      (canvas.height >> 8) & 0xff,
-      ...raster,
-      10,
-      27, 97, 0,
-    ]);
-    return uint8ToBase64(command);
-  } catch {
-    return undefined;
-  }
-}
-
-function loadReceiptImage(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    if (!src.startsWith("data:")) {
-      image.crossOrigin = "anonymous";
-    }
-    image.onload = () => resolve(image);
-    image.onerror = reject;
-    image.src = src;
-  });
-}
-
-function uint8ToBase64(bytes: Uint8Array) {
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 0x8000) {
-    const chunk = bytes.subarray(index, index + 0x8000);
-    binary += String.fromCharCode(...chunk);
-  }
-  return window.btoa(binary);
-}
-
 function buildReceiptText(input: {
   receiptNumber: string;
   outletName: string;
+  outletAddress?: string | null;
   cashierName: string;
   footerNote?: string;
+  layout: ReceiptPrintLayout;
   lines: CartLine[];
   subtotal: number;
   discount: number;
@@ -2620,104 +2640,191 @@ function buildReceiptText(input: {
   changeTotal: number;
   receivableAmount: number;
 }) {
-  const width = 32;
-  const separator = "-".repeat(width);
-  const row = (left: string, right: string) => {
-    const rightSafe = right.slice(0, width);
-    const leftSafe = left.slice(0, Math.max(0, width - rightSafe.length - 1));
-    return `${leftSafe.padEnd(Math.max(0, width - rightSafe.length - 1))} ${rightSafe}`;
-  };
-  const center = (value: string) => {
-    const safe = value.slice(0, width);
-    const leftPad = Math.max(0, Math.floor((width - safe.length) / 2));
-    return `${" ".repeat(leftPad)}${safe}`;
-  };
+  const width = receiptColumnWidth(input.layout.paperWidth);
+  const { separator, row, center } = receiptTextFormatter(width);
   const receiptMoney = (value: string | number) => money(value);
   const cashAppliedTotal = input.payments
     .filter((payment) => payment.method === "cash")
     .reduce((sum, payment) => sum + payment.amount, 0);
   const cashDisplayTotal = Math.max(input.cashTenderedTotal, cashAppliedTotal);
-  const lines = [
-    center(input.outletName),
-    center(`Kasir: ${input.cashierName}`),
-    center(`No: ${input.receiptNumber}`),
-    center(formatDate(new Date().toISOString())),
-    separator,
-    ...input.lines.flatMap((line) => [
-      line.item.skuName.slice(0, width),
-      row(`${qty(line.quantity)} ${line.unitLabel} x ${receiptMoney(line.unitPrice)}`, receiptMoney(lineGrossTotal(line))),
-      ...(lineDiscountTotal(line) > 0 ? [row("Diskon item", receiptMoney(lineDiscountTotal(line)))] : []),
-    ]),
-    separator,
-    ...(input.subtotal > 0 ? [row("Subtotal", receiptMoney(input.subtotal))] : []),
-    ...(input.discount > 0 ? [row("Diskon", receiptMoney(input.discount))] : []),
-    ...(input.tax > 0 ? [row("Pajak", receiptMoney(input.tax))] : []),
-    ...(input.serviceCharge > 0 ? [row("Service", receiptMoney(input.serviceCharge))] : []),
-    ...(input.donation > 0 ? [row("Donasi", receiptMoney(input.donation))] : []),
-    ...(input.rounding > 0 ? [row("Pembulatan", receiptMoney(input.rounding))] : []),
-    row("TOTAL", receiptMoney(input.total)),
-    ...input.payments
-      .filter((payment) => payment.amount > 0 && payment.method !== "cash")
-      .map((payment) => row(paymentMethodLabel(payment.method), receiptMoney(payment.amount))),
-    ...(cashDisplayTotal > 0
-      ? [row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", receiptMoney(cashDisplayTotal))]
-      : []),
-    ...(input.receivableAmount > 0 ? [row("Piutang", receiptMoney(input.receivableAmount))] : []),
-    ...(input.changeTotal > 0 ? [row("Kembali", receiptMoney(input.changeTotal))] : []),
-    separator,
-    center(input.footerNote || "Terima kasih"),
-  ];
+  const lines: string[] = [];
+  const renderBlock = (block: ReceiptBlock) => {
+    if (block === "outlet") lines.push(center(input.outletName));
+    if (block === "address" && input.outletAddress?.trim()) lines.push(center(input.outletAddress.trim()));
+    if (block === "cashier") lines.push(center(`Kasir: ${input.cashierName}`));
+    if (block === "receiptNumber") lines.push(center(`No: ${input.receiptNumber}`), center(receiptDateLabel(new Date().toISOString())));
+    if (block === "items") {
+      lines.push(separator);
+      lines.push(
+        ...input.lines.flatMap((line) => [
+          ...wrapReceiptLine(line.item.skuName, width),
+          ...receiptItemLine(`${qty(line.quantity)} ${receiptUnitLabel(line.unitLabel)} x ${receiptMoney(line.unitPrice)}`, receiptMoney(lineGrossTotal(line)), width, row),
+          ...(lineDiscountTotal(line) > 0 ? [row("Diskon item", receiptMoney(lineDiscountTotal(line)))] : []),
+        ]),
+      );
+    }
+    if (block === "totals") {
+      lines.push(
+        separator,
+        ...(input.subtotal > 0 ? [row("Subtotal", receiptMoney(input.subtotal))] : []),
+        ...(input.discount > 0 ? [row("Diskon", receiptMoney(input.discount))] : []),
+        ...(input.tax > 0 ? [row("Pajak", receiptMoney(input.tax))] : []),
+        ...(input.serviceCharge > 0 ? [row("Service", receiptMoney(input.serviceCharge))] : []),
+        ...(input.donation > 0 ? [row("Donasi", receiptMoney(input.donation))] : []),
+        ...(input.rounding > 0 ? [row("Pembulatan", receiptMoney(input.rounding))] : []),
+        row("TOTAL", receiptMoney(input.total)),
+      );
+    }
+    if (block === "payment") {
+      lines.push(
+        ...input.payments
+          .filter((payment) => payment.amount > 0 && payment.method !== "cash")
+          .map((payment) => row(paymentMethodLabel(payment.method), receiptMoney(payment.amount))),
+        ...(cashDisplayTotal > 0
+          ? [row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", receiptMoney(cashDisplayTotal))]
+          : []),
+        ...(input.receivableAmount > 0 ? [row("Piutang", receiptMoney(input.receivableAmount))] : []),
+        ...(input.changeTotal > 0 ? [row("Kembali", receiptMoney(input.changeTotal))] : []),
+      );
+    }
+    if (block === "note") lines.push(separator, ...receiptNoteLines(input.footerNote || "Terima kasih", width).map(center));
+  };
+  const layout = sanitizeReceiptLayout(input.layout);
+  layout.header.forEach(renderBlock);
+  layout.body.forEach(renderBlock);
+  layout.footer.forEach(renderBlock);
   return `${lines.join("\n")}\n`;
 }
 
-function buildSalesDetailReprintText(sale: SalesDetail, fallbackOutletName: string, footerNote = "Terima kasih") {
-  const width = 32;
-  const separator = "-".repeat(width);
-  const row = (left: string, right: string) => {
-    const rightSafe = right.slice(0, width);
-    const leftSafe = left.slice(0, Math.max(0, width - rightSafe.length - 1));
-    return `${leftSafe.padEnd(Math.max(0, width - rightSafe.length - 1))} ${rightSafe}`;
-  };
-  const center = (value: string) => {
-    const safe = value.slice(0, width);
-    const leftPad = Math.max(0, Math.floor((width - safe.length) / 2));
-    return `${" ".repeat(leftPad)}${safe}`;
-  };
+function buildSalesDetailReprintText(
+  sale: SalesDetail,
+  fallbackOutletName: string,
+  fallbackOutletAddress: string,
+  layout: ReceiptPrintLayout,
+  footerNote = "Terima kasih",
+) {
+  const width = receiptColumnWidth(layout.paperWidth);
+  const { separator, row, center } = receiptTextFormatter(width);
   const payments = sale.payments ?? [];
   const cashAppliedTotal = payments
     .filter((payment) => payment.method === "cash")
     .reduce((sum, payment) => sum + parseNumber(payment.amount), 0);
   const cashDisplayTotal = Math.max(parseNumber(sale.cashTenderedTotal ?? 0), cashAppliedTotal);
   const change = parseNumber(sale.changeTotal ?? 0);
-  const lines = [
-    center(sale.outletName || fallbackOutletName),
-    center(`Kasir: ${sale.cashierName || "Kasir"}`),
-    center(`No: ${sale.receiptNumber}`),
-    center(formatDate(sale.createdAt)),
-    center("CETAK ULANG"),
-    separator,
-    ...sale.items.flatMap((item) => [
-      item.name.slice(0, width),
-      row(`${qty(item.quantityInput)} ${item.unitCode || "unit"} x ${money(item.unitPrice)}`, money(item.lineTotal)),
-      ...(parseNumber(item.discountTotal ?? 0) > 0 ? [row("Diskon item", money(item.discountTotal ?? 0))] : []),
-    ]),
-    separator,
-    ...(parseNumber(sale.subtotal ?? 0) > 0 ? [row("Subtotal", money(sale.subtotal ?? 0))] : []),
-    ...(parseNumber(sale.discountTotal ?? 0) > 0 ? [row("Diskon", money(sale.discountTotal ?? 0))] : []),
-    ...(parseNumber(sale.taxTotal ?? 0) > 0 ? [row("Pajak", money(sale.taxTotal ?? 0))] : []),
-    ...(parseNumber(sale.serviceChargeTotal ?? 0) > 0 ? [row("Service", money(sale.serviceChargeTotal ?? 0))] : []),
-    ...(parseNumber(sale.donationTotal ?? 0) > 0 ? [row("Donasi", money(sale.donationTotal ?? 0))] : []),
-    ...(parseNumber(sale.roundingTotal ?? 0) > 0 ? [row("Pembulatan", money(sale.roundingTotal ?? 0))] : []),
-    row("TOTAL", money(sale.grandTotal)),
-    ...payments
-      .filter((payment) => parseNumber(payment.amount) > 0 && payment.method !== "cash")
-      .map((payment) => row(paymentMethodLabel(payment.method), money(payment.amount))),
-    ...(cashDisplayTotal > 0
-      ? [row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", money(cashDisplayTotal))]
-      : []),
-    ...(change > 0 ? [row("Kembali", money(change))] : []),
-    separator,
-    center(footerNote),
-  ];
+  const lines: string[] = [];
+  const renderBlock = (block: ReceiptBlock) => {
+    if (block === "outlet") lines.push(center(sale.outletName || fallbackOutletName));
+    if (block === "address" && fallbackOutletAddress.trim()) lines.push(center(fallbackOutletAddress.trim()));
+    if (block === "cashier") lines.push(center(`Kasir: ${sale.cashierName || "Kasir"}`));
+    if (block === "receiptNumber") lines.push(center(`No: ${sale.receiptNumber}`), center(receiptDateLabel(sale.createdAt)), center("CETAK ULANG"));
+    if (block === "items") {
+      lines.push(separator);
+      lines.push(
+        ...sale.items.flatMap((item) => [
+          ...wrapReceiptLine(item.name, width),
+          ...receiptItemLine(`${qty(item.quantityInput)} ${receiptUnitLabel(item.unitCode)} x ${money(item.unitPrice)}`, money(item.lineTotal), width, row),
+          ...(parseNumber(item.discountTotal ?? 0) > 0 ? [row("Diskon item", money(item.discountTotal ?? 0))] : []),
+        ]),
+      );
+    }
+    if (block === "totals") {
+      lines.push(
+        separator,
+        ...(parseNumber(sale.subtotal ?? 0) > 0 ? [row("Subtotal", money(sale.subtotal ?? 0))] : []),
+        ...(parseNumber(sale.discountTotal ?? 0) > 0 ? [row("Diskon", money(sale.discountTotal ?? 0))] : []),
+        ...(parseNumber(sale.taxTotal ?? 0) > 0 ? [row("Pajak", money(sale.taxTotal ?? 0))] : []),
+        ...(parseNumber(sale.serviceChargeTotal ?? 0) > 0 ? [row("Service", money(sale.serviceChargeTotal ?? 0))] : []),
+        ...(parseNumber(sale.donationTotal ?? 0) > 0 ? [row("Donasi", money(sale.donationTotal ?? 0))] : []),
+        ...(parseNumber(sale.roundingTotal ?? 0) > 0 ? [row("Pembulatan", money(sale.roundingTotal ?? 0))] : []),
+        row("TOTAL", money(sale.grandTotal)),
+      );
+    }
+    if (block === "payment") {
+      lines.push(
+        ...payments
+          .filter((payment) => parseNumber(payment.amount) > 0 && payment.method !== "cash")
+          .map((payment) => row(paymentMethodLabel(payment.method), money(payment.amount))),
+        ...(cashDisplayTotal > 0
+          ? [row(cashDisplayTotal > cashAppliedTotal ? "Tunai diterima" : "Tunai", money(cashDisplayTotal))]
+          : []),
+        ...(change > 0 ? [row("Kembali", money(change))] : []),
+      );
+    }
+    if (block === "note") lines.push(separator, ...receiptNoteLines(footerNote, width).map(center));
+  };
+  const safeLayout = sanitizeReceiptLayout(layout);
+  safeLayout.header.forEach(renderBlock);
+  safeLayout.body.forEach(renderBlock);
+  safeLayout.footer.forEach(renderBlock);
   return `${lines.join("\n")}\n`;
+}
+
+function receiptColumnWidth(paperWidth: "58" | "80") {
+  return paperWidth === "80" ? 42 : 28;
+}
+
+function receiptTextFormatter(width: number) {
+  const separator = "-".repeat(width);
+  const row = (left: string, right: string) => {
+    const rightSafe = normalizeReceiptText(right).slice(0, width);
+    const leftSafe = normalizeReceiptText(left).slice(0, Math.max(0, width - rightSafe.length - 1));
+    return `${leftSafe.padEnd(Math.max(0, width - rightSafe.length - 1))} ${rightSafe}`;
+  };
+  const center = (value: string) => {
+    const safe = normalizeReceiptText(value).slice(0, width);
+    const leftPad = Math.max(0, Math.floor((width - safe.length) / 2));
+    return `${" ".repeat(leftPad)}${safe}`;
+  };
+  return { separator, row, center };
+}
+
+function wrapReceiptLine(value: string, width: number) {
+  const normalized = normalizeReceiptText(value).trim();
+  if (!normalized) return [];
+  const chunks = [];
+  for (let index = 0; index < normalized.length; index += width) {
+    chunks.push(normalized.slice(index, index + width));
+  }
+  return chunks;
+}
+
+function receiptNoteLines(value: string, width: number) {
+  const note = value.trim() ? value : "Terima kasih";
+  return note.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").flatMap((line) => {
+    const wrapped = wrapReceiptLine(line, width);
+    return wrapped.length ? wrapped : [""];
+  });
+}
+
+function normalizeReceiptText(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "?");
+}
+
+function receiptLayoutHasBlock(layout: ReceiptPrintLayout, block: ReceiptBlock) {
+  const safeLayout = sanitizeReceiptLayout(layout);
+  return safeLayout.header.includes(block) || safeLayout.body.includes(block) || safeLayout.footer.includes(block);
+}
+
+function sanitizeReceiptLayout(layout: ReceiptPrintLayout): ReceiptPrintLayout {
+  const header = layout.header.filter((block) => block !== "note");
+  const body = layout.body.filter((block) => block !== "note");
+  const footer = layout.footer.filter((block) => block !== "logo" && block !== "note");
+  return {
+    paperWidth: layout.paperWidth,
+    header,
+    body,
+    footer: [...footer, "note"],
+  };
+}
+
+function receiptUnitLabel(value: string | null | undefined) {
+  const normalized = normalizeReceiptText(value || "unit").trim();
+  return normalized || "unit";
+}
+
+function receiptItemLine(left: string, right: string, width: number, row: (left: string, right: string) => string) {
+  const leftSafe = normalizeReceiptText(left).trim();
+  const rightSafe = normalizeReceiptText(right).trim();
+  if (leftSafe.length + rightSafe.length + 1 <= width) return [row(leftSafe, rightSafe)];
+  return [leftSafe.slice(0, width), row("", rightSafe)];
 }

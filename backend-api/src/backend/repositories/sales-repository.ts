@@ -3,14 +3,17 @@ import { db } from "@/db";
 import {
   auditLog,
   inventoryBalance,
+  inventoryBatch,
   outlet,
   payment,
   product,
   sale,
   saleItem,
+  salePromotion,
   shift,
   sku,
   stockMovement,
+  syncQueue,
   unit,
 } from "@/db/schema";
 import { fixed } from "@/lib/number";
@@ -47,11 +50,34 @@ export const salesRepository = {
       .limit(1);
   },
 
-  findOpenShift(tx: Tx, outletId: string, cashierUserId: string) {
+  findOpenShift(tx: Tx, outletId: string, cashierUserId: string, organizationId: string) {
     return tx
       .select()
       .from(shift)
-      .where(and(eq(shift.outletId, outletId), eq(shift.cashierUserId, cashierUserId), eq(shift.status, "open")))
+      .where(
+        and(
+          eq(shift.outletId, outletId),
+          eq(shift.cashierUserId, cashierUserId),
+          eq(shift.organizationId, organizationId),
+          eq(shift.status, "open"),
+        ),
+      )
+      .limit(1);
+  },
+
+  findOpenShiftById(tx: Tx, shiftId: string, outletId: string, cashierUserId: string, organizationId: string) {
+    return tx
+      .select()
+      .from(shift)
+      .where(
+        and(
+          eq(shift.id, shiftId),
+          eq(shift.outletId, outletId),
+          eq(shift.cashierUserId, cashierUserId),
+          eq(shift.organizationId, organizationId),
+          eq(shift.status, "open"),
+        ),
+      )
       .limit(1);
   },
 
@@ -67,7 +93,9 @@ export const salesRepository = {
       .limit(1);
   },
 
-  findActiveSkuWithProduct(tx: Tx, skuId: string, organizationId: string) {
+  findActiveSkuWithProduct(tx: Tx, skuId: string, organizationId: string, outletId?: string) {
+    const conditions = [eq(sku.id, skuId), eq(sku.organizationId, organizationId), eq(sku.isActive, true), eq(product.isActive, true)];
+    if (outletId) conditions.push(eq(product.outletId, outletId));
     return tx
       .select({
         id: sku.id,
@@ -82,6 +110,8 @@ export const salesRepository = {
         price: sku.price,
         cost: sku.cost,
         minStockBaseQty: sku.minStockBaseQty,
+        trackInventory: sku.trackInventory,
+        quantityMode: sku.quantityMode,
         isActive: sku.isActive,
         createdAt: sku.createdAt,
         updatedAt: sku.updatedAt,
@@ -89,7 +119,7 @@ export const salesRepository = {
       })
       .from(sku)
       .innerJoin(product, eq(product.id, sku.productId))
-      .where(and(eq(sku.id, skuId), eq(sku.organizationId, organizationId), eq(sku.isActive, true), eq(product.isActive, true)))
+      .where(and(...conditions))
       .limit(1);
   },
 
@@ -130,10 +160,34 @@ export const salesRepository = {
         productName: product.name,
         voidWindowHours: product.voidWindowHours,
         refundWindowHours: product.refundWindowHours,
+        trackInventory: sku.trackInventory,
       })
       .from(saleItem)
       .innerJoin(sku, eq(sku.id, saleItem.skuId))
       .innerJoin(product, eq(product.id, sku.productId))
+      .where(eq(saleItem.saleId, saleId));
+  },
+
+  findSaleItemsWithSkuModeTx(tx: Tx, saleId: string) {
+    return tx
+      .select({
+        id: saleItem.id,
+        saleId: saleItem.saleId,
+        skuId: saleItem.skuId,
+        nameSnapshot: saleItem.nameSnapshot,
+        quantityInput: saleItem.quantityInput,
+        unitId: saleItem.unitId,
+        quantityBase: saleItem.quantityBase,
+        unitPrice: saleItem.unitPrice,
+        discountTotal: saleItem.discountTotal,
+        lineTotal: saleItem.lineTotal,
+        cogsTotal: saleItem.cogsTotal,
+        createdAt: saleItem.createdAt,
+        updatedAt: saleItem.updatedAt,
+        trackInventory: sku.trackInventory,
+      })
+      .from(saleItem)
+      .innerJoin(sku, eq(sku.id, saleItem.skuId))
       .where(eq(saleItem.saleId, saleId));
   },
 
@@ -169,6 +223,49 @@ export const salesRepository = {
       });
   },
 
+  async decrementBatchesFefo(tx: Tx, organizationId: string, outletId: string, skuId: string, quantityBase: number) {
+    let remaining = quantityBase;
+    const allocations: Array<{ batchId: string | null; quantityBase: number }> = [];
+    const batches = await tx
+      .select({
+        id: inventoryBatch.id,
+        onHandBaseQty: inventoryBatch.onHandBaseQty,
+      })
+      .from(inventoryBatch)
+      .where(and(
+        eq(inventoryBatch.organizationId, organizationId),
+        eq(inventoryBatch.outletId, outletId),
+        eq(inventoryBatch.skuId, skuId),
+        sql`${inventoryBatch.onHandBaseQty} > 0`,
+      ))
+      .orderBy(sql`${inventoryBatch.expiryDate} asc nulls last`, inventoryBatch.receivedAt);
+
+    for (const batch of batches) {
+      if (remaining <= 0.000001) break;
+      const batchQty = Number(batch.onHandBaseQty ?? 0);
+      const deducted = Math.min(batchQty, remaining);
+      if (deducted <= 0) continue;
+      const updated = await tx
+        .update(inventoryBatch)
+        .set({
+          onHandBaseQty: sql`${inventoryBatch.onHandBaseQty} - ${fixed(deducted, 3)}`,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(inventoryBatch.id, batch.id), sql`${inventoryBatch.onHandBaseQty} >= ${fixed(deducted, 3)}`))
+        .returning({ id: inventoryBatch.id });
+      if (!updated.length) {
+        return null;
+      }
+      allocations.push({ batchId: batch.id, quantityBase: deducted });
+      remaining -= deducted;
+    }
+
+    if (remaining > 0.000001) {
+      return null;
+    }
+    return allocations;
+  },
+
   createStockMovement(tx: Tx, values: typeof stockMovement.$inferInsert) {
     return tx.insert(stockMovement).values(values);
   },
@@ -179,6 +276,30 @@ export const salesRepository = {
 
   findSalePaymentsTx(tx: Tx, saleId: string) {
     return tx.select().from(payment).where(eq(payment.saleId, saleId));
+  },
+
+  findSalePromotionsTx(tx: Tx, saleId: string) {
+    return tx.select().from(salePromotion).where(eq(salePromotion.saleId, saleId));
+  },
+
+  findSyncQueueByIdempotencyKeyTx(tx: Tx, organizationId: string, idempotencyKey: string) {
+    return tx
+      .select()
+      .from(syncQueue)
+      .where(and(eq(syncQueue.organizationId, organizationId), eq(syncQueue.idempotencyKey, idempotencyKey)))
+      .limit(1);
+  },
+
+  updateSyncQueueByIdempotencyKeyTx(
+    tx: Tx,
+    organizationId: string,
+    idempotencyKey: string,
+    values: Partial<typeof syncQueue.$inferInsert>,
+  ) {
+    return tx
+      .update(syncQueue)
+      .set(values)
+      .where(and(eq(syncQueue.organizationId, organizationId), eq(syncQueue.idempotencyKey, idempotencyKey)));
   },
 
   incrementShiftCash(tx: Tx, shiftId: string, cashTotal: number) {

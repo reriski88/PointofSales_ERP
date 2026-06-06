@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pos_cemilan_kasir/features/home/data/pos_api.dart';
 import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -74,6 +75,7 @@ class AuthCubit extends Cubit<AuthState> {
   static const offlineUserNameKey = 'offline_login_user_name';
   static const offlineUserRoleKey = 'offline_login_user_role';
   static const cachedProfileKey = 'cached_profile';
+  static const _secureStorage = FlutterSecureStorage();
 
   PosApi _api;
   SharedPreferences? _prefs;
@@ -240,6 +242,11 @@ class AuthCubit extends Cubit<AuthState> {
   }
 
   Future<void> logout({String message = 'Sesi kasir keluar.'}) async {
+    try {
+      await _api.signOut();
+    } catch (_) {
+      _api = PosApi(baseUrl: state.baseUrl);
+    }
     await _prefs?.remove(cookieKey);
     await _prefs?.remove(bearerKey);
     _api = PosApi(baseUrl: state.baseUrl);
@@ -259,7 +266,8 @@ class AuthCubit extends Cubit<AuthState> {
   }) async {
     final user = state.currentUser;
     await _prefs?.setString(offlineEmailKey, email);
-    await _prefs?.setString(offlinePasswordKey, password);
+    await _secureStorage.write(key: offlinePasswordKey, value: password);
+    await _prefs?.remove(offlinePasswordKey);
     if (user != null) {
       await _cacheProfile(user);
       await _prefs?.setString(offlineUserNameKey, user.name);
@@ -272,7 +280,8 @@ class AuthCubit extends Cubit<AuthState> {
     required String password,
   }) async {
     final savedEmail = _prefs?.getString(offlineEmailKey) ?? '';
-    final savedPassword = _prefs?.getString(offlinePasswordKey) ?? '';
+    final legacyPassword = _prefs?.getString(offlinePasswordKey) ?? '';
+    final savedPassword = await _secureStorage.read(key: offlinePasswordKey) ?? legacyPassword;
     if (email.isEmpty ||
         password.isEmpty ||
         email != savedEmail ||
@@ -280,6 +289,11 @@ class AuthCubit extends Cubit<AuthState> {
       throw ApiUnavailable(
         'Server tidak terhubung dan data login offline belum cocok. Login online sekali dulu saat server tersedia.',
       );
+    }
+
+    if (legacyPassword.isNotEmpty) {
+      await _secureStorage.write(key: offlinePasswordKey, value: legacyPassword);
+      await _prefs?.remove(offlinePasswordKey);
     }
 
     emit(

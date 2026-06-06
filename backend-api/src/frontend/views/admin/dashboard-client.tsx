@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import {
-  AlertTriangle,
-  BarChart3,
   Boxes,
   Building2,
   CircleAlert,
+  LineChart,
   ReceiptText,
+  RefreshCcw,
   Trophy,
   Users,
 } from "lucide-react";
@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/frontend/controllers/language-provider";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import { useRealtimeEvents } from "@/frontend/controllers/use-realtime-events";
-import { CollapsibleSection } from "./_components/collapsible-section";
 
 type ApiResponse<T> = { data: T };
 type DashboardSummary = {
@@ -34,14 +33,10 @@ type DashboardSummary = {
     lowStock: StockAlert[];
     emptyStock: StockAlert[];
   };
-  salesChart: {
-    mode: ChartMode;
-    label: string;
-    rows: SalesChartPoint[];
-  };
+  salesChart: { mode: string; label: string; rows: SalesChartPoint[] };
   topProductsByOutlet: TopProductsByOutlet[];
 };
-type ChartMode = "daily" | "weekly" | "monthly" | "yearly";
+type ChartMode = "range" | "daily" | "monthly" | "yearly";
 type StockAlert = {
   outletName: string;
   outletCode: string;
@@ -52,21 +47,13 @@ type StockAlert = {
   minStockBaseQty: string;
   baseUnitCode: string;
 };
-type SalesChartPoint = {
-  label: string;
-  transactionCount: number;
-  netSales: string;
-};
+type SalesChartPoint = { label: string; transactionCount: number; netSales: string };
 type TopProductsByOutlet = {
   outlet: { id: string; name: string; code: string };
-  products: Array<{
-    skuId: string;
-    skuName: string;
-    quantitySold: string;
-    unitCode: string;
-    netSales: string;
-  }>;
+  products: Array<{ skuId: string; skuName: string; quantitySold: string; unitCode: string; netSales: string }>;
 };
+
+const chartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626"];
 
 export function DashboardClient() {
   const { language, t } = useLanguage();
@@ -75,18 +62,12 @@ export function DashboardClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const today = new Date();
-  const todayInput = toDateInput(today);
-  const [chartMode, setChartMode] = useState<ChartMode>("daily");
+  const [chartMode, setChartMode] = useState<ChartMode>("range");
+  const [chartDate, setChartDate] = useState(toDateInput(today));
   const [chartFrom, setChartFrom] = useState(toDateInput(addDays(today, -6)));
-  const [chartTo, setChartTo] = useState(todayInput);
+  const [chartTo, setChartTo] = useState(toDateInput(today));
   const [chartMonth, setChartMonth] = useState(toMonthInput(today));
   const [chartYear, setChartYear] = useState(today.getFullYear().toString());
-  const [chartStartYear, setChartStartYear] = useState(
-    (today.getFullYear() - 4).toString(),
-  );
-  const [chartEndYear, setChartEndYear] = useState(
-    today.getFullYear().toString(),
-  );
 
   async function loadSummary() {
     if (!selectedOutletId) {
@@ -97,23 +78,19 @@ export function DashboardClient() {
     }
     setIsLoading(true);
     setMessage(null);
-
     try {
-      const query = new URLSearchParams({ chartMode });
-      if (chartMode === "daily") {
+      const query = new URLSearchParams({ chartMode: chartModeToApiMode(chartMode) });
+      if (chartMode === "range") {
         query.set("from", chartFrom);
         query.set("to", chartTo);
       }
-      if (chartMode === "weekly") query.set("month", chartMonth);
-      if (chartMode === "monthly") query.set("year", chartYear);
-      if (chartMode === "yearly") {
-        query.set("startYear", chartStartYear);
-        query.set("endYear", chartEndYear);
+      if (chartMode === "daily") {
+        query.set("from", chartDate);
+        query.set("to", chartDate);
       }
-      if (selectedOutletId !== allOutletsValue) {
-        query.set("outletId", selectedOutletId);
-      }
-
+      if (chartMode === "monthly") query.set("month", chartMonth);
+      if (chartMode === "yearly") query.set("year", chartYear);
+      if (selectedOutletId !== allOutletsValue) query.set("outletId", selectedOutletId);
       const response = await fetch(`/api/dashboard/summary?${query.toString()}`);
       if (response.status === 401) {
         window.location.href = "/admin/login";
@@ -123,7 +100,6 @@ export function DashboardClient() {
         setMessage(t("dashboardStatsError"));
         return;
       }
-
       const json = (await response.json()) as ApiResponse<DashboardSummary>;
       setSummary(json.data);
     } catch {
@@ -146,137 +122,79 @@ export function DashboardClient() {
     onEvent: () => void loadSummary(),
   });
 
+  const topProducts = useMemo(
+    () => (summary?.topProductsByOutlet ?? []).flatMap((item) => item.products.map((product) => ({ ...product, outletName: item.outlet.name }))).slice(0, 8),
+    [summary],
+  );
+  const totalAlerts = (summary?.alerts.closedOutlets.length ?? 0) + (summary?.alerts.lowStock.length ?? 0) + (summary?.alerts.emptyStock.length ?? 0);
+  const activeOutletPercent = percent(summary?.stats.outletsActive ?? 0, summary?.stats.outletsTotal ?? 0);
+  const activeUserPercent = percent(summary?.stats.usersActive ?? 0, summary?.stats.usersTotal ?? 0);
+
   return (
-    <>
-      <CollapsibleSection
-        title={t("operationalStats")}
-        description={t("operationalStatsDesc")}
-        collapsible={false}
-        isLoading={isLoading}
-        loadingText={t("loadingStats")}
-      >
-        {message ? (
-          <p className="mb-4 text-sm text-destructive">{message}</p>
-        ) : null}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatTile
-            icon={Building2}
-            label={t("activeOutlets")}
-            value={`${summary?.stats.outletsActive ?? 0}/${summary?.stats.outletsTotal ?? 0}`}
-          />
-          <StatTile
-            icon={Boxes}
-            label={t("productsSku")}
-            value={`${summary?.stats.products ?? 0}/${summary?.stats.skus ?? 0}`}
-          />
-          <StatTile
-            icon={Users}
-            label={t("activeUsers")}
-            value={`${summary?.stats.usersActive ?? 0}/${summary?.stats.usersTotal ?? 0}`}
-          />
-          <StatTile
-            icon={ReceiptText}
-            label={t("netSalesToday")}
-            value={currency(summary?.stats.netSalesToday, language)}
-            detail={`${summary?.stats.transactionsToday ?? 0} ${t("transactions")}`}
-          />
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="h-1.5 bg-[linear-gradient(90deg,#2563eb,#16a34a,#f59e0b,#dc2626)]" />
+        <div className="p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold leading-tight">Dashboard Statistik</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Ringkasan penjualan, operasional outlet, produk, user, dan alert stok.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex h-9 items-center rounded-md border bg-background px-3 text-xs font-medium text-muted-foreground">
+              {summary?.salesChart.label ?? "Periode aktif"}
+            </span>
+            <Button type="button" variant="outline" className="h-9 gap-2" onClick={() => void loadSummary()} disabled={isLoading}>
+              <RefreshCcw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
-      </CollapsibleSection>
+        {message ? <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{message}</p> : null}
+        </div>
+      </section>
 
-      <CollapsibleSection
-        title={t("salesChart")}
-        description={t("salesChartDesc")}
-        isLoading={isLoading}
-        loadingText={t("loadingSalesChart")}
-      >
-        <SalesChartControls
-          mode={chartMode}
-          onModeChange={setChartMode}
-          from={chartFrom}
-          onFromChange={setChartFrom}
-          to={chartTo}
-          onToChange={setChartTo}
-          month={chartMonth}
-          onMonthChange={setChartMonth}
-          year={chartYear}
-          onYearChange={setChartYear}
-          startYear={chartStartYear}
-          onStartYearChange={setChartStartYear}
-          endYear={chartEndYear}
-          onEndYearChange={setChartEndYear}
-          onApply={() => void loadSummary()}
-        />
-        <div className="mt-4">
-          <SalesChartPanel
-            title={summary?.salesChart.label ?? ""}
-            rows={summary?.salesChart.rows ?? []}
-          />
-        </div>
-      </CollapsibleSection>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard icon={ReceiptText} label="Penjualan Hari Ini" value={currency(summary?.stats.netSalesToday, language)} detail={`${summary?.stats.transactionsToday ?? 0} transaksi`} tone="blue" />
+        <MetricCard icon={Building2} label="Outlet Aktif" value={`${summary?.stats.outletsActive ?? 0}/${summary?.stats.outletsTotal ?? 0}`} detail={`${activeOutletPercent}% aktif`} tone="green" />
+        <MetricCard icon={Boxes} label="Produk / SKU" value={`${summary?.stats.products ?? 0}/${summary?.stats.skus ?? 0}`} detail="Produk aktif dan varian" tone="amber" />
+        <MetricCard icon={Users} label="User Aktif" value={`${summary?.stats.usersActive ?? 0}/${summary?.stats.usersTotal ?? 0}`} detail={`${activeUserPercent}% aktif`} tone="violet" />
+      </section>
 
-      <CollapsibleSection
-        title={t("topProductsByOutlet")}
-        description={t("topProductsDesc")}
-        isLoading={isLoading}
-        loadingText={t("loadingTopProducts")}
-      >
-        <div className="grid gap-3 xl:grid-cols-2">
-          {(summary?.topProductsByOutlet ?? []).map((item) => (
-            <TopProductsPanel key={item.outlet.id} item={item} />
-          ))}
-          {summary && !summary.topProductsByOutlet.length ? (
-            <p className="text-sm text-muted-foreground">
-              {t("noActiveOutlets")}
-            </p>
-          ) : null}
+      <section className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
+        <div className="rounded-lg border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <ChartTitle icon={LineChart} title="Grafik Penjualan" detail="Nilai penjualan bersih per periode" />
+            <SalesChartControls mode={chartMode} onModeChange={setChartMode} date={chartDate} onDateChange={setChartDate} from={chartFrom} onFromChange={setChartFrom} to={chartTo} onToChange={setChartTo} month={chartMonth} onMonthChange={setChartMonth} year={chartYear} onYearChange={setChartYear} onApply={() => void loadSummary()} />
+          </div>
+          <SalesAreaChart rows={summary?.salesChart.rows ?? []} />
         </div>
-      </CollapsibleSection>
 
-      <CollapsibleSection
-        title={t("operationalAlerts")}
-        description={t("operationalAlertsDesc")}
-        isLoading={isLoading}
-        loadingText={t("loadingAlerts")}
-      >
-        <div className="grid gap-3 xl:grid-cols-3">
-          <AlertPanel
-            icon={CircleAlert}
-            title={t("closedOutlets")}
-            tone="danger"
-            rows={(summary?.alerts.closedOutlets ?? []).map((item) => ({
-              key: item.id,
-              title: item.name,
-              detail: item.code,
-            }))}
-            emptyText={t("noClosedOutlets")}
-          />
-          <AlertPanel
-            icon={AlertTriangle}
-            title={t("lowStock")}
-            tone="warning"
-            rows={(summary?.alerts.lowStock ?? []).map((item) =>
-              stockAlertRow(item, t),
-            )}
-            emptyText={t("noLowStock")}
-          />
-          <AlertPanel
-            icon={Boxes}
-            title={t("emptyStock")}
-            tone="danger"
-            rows={(summary?.alerts.emptyStock ?? []).map((item) =>
-              stockAlertRow(item, t),
-            )}
-            emptyText={t("noEmptyStock")}
-          />
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-1">
+          <DonutPanel title="Outlet" label={`${activeOutletPercent}%`} detail="Outlet aktif" segments={[{ label: "Aktif", value: summary?.stats.outletsActive ?? 0, color: chartColors[1] }, { label: "Nonaktif", value: Math.max(0, (summary?.stats.outletsTotal ?? 0) - (summary?.stats.outletsActive ?? 0)), color: chartColors[3] }]} />
+          <DonutPanel title="Alert Operasional" label={formatNumber(totalAlerts, 0, language)} detail="Alert aktif" segments={[{ label: "Stok kosong", value: summary?.alerts.emptyStock.length ?? 0, color: chartColors[3] }, { label: "Stok rendah", value: summary?.alerts.lowStock.length ?? 0, color: chartColors[2] }, { label: "Outlet tutup", value: summary?.alerts.closedOutlets.length ?? 0, color: "#64748b" }]} />
         </div>
-      </CollapsibleSection>
-    </>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+        <div className="rounded-lg border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+          <ChartTitle icon={Trophy} title="Produk Terlaris" detail="Ranking produk berdasarkan qty terjual" />
+          <TopProductBars products={topProducts} />
+        </div>
+        <div className="rounded-lg border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+          <ChartTitle icon={CircleAlert} title="Ringkasan Alert" detail="Stok kosong, stok rendah, dan outlet tutup" />
+          <AlertSummary summary={summary} />
+        </div>
+      </section>
+    </div>
   );
 }
 
 function SalesChartControls(props: {
   mode: ChartMode;
   onModeChange: (value: ChartMode) => void;
+  date: string;
+  onDateChange: (value: string) => void;
   from: string;
   onFromChange: (value: string) => void;
   to: string;
@@ -285,315 +203,205 @@ function SalesChartControls(props: {
   onMonthChange: (value: string) => void;
   year: string;
   onYearChange: (value: string) => void;
-  startYear: string;
-  onStartYearChange: (value: string) => void;
-  endYear: string;
-  onEndYearChange: (value: string) => void;
   onApply: () => void;
 }) {
-  const { t } = useLanguage();
+  const modes: Array<{ value: ChartMode; label: string }> = [
+    { value: "range", label: "Range" },
+    { value: "daily", label: "Harian" },
+    { value: "monthly", label: "Bulanan" },
+    { value: "yearly", label: "Tahunan" },
+  ];
   return (
-    <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-[160px_repeat(2,minmax(160px,1fr))_auto] lg:items-end">
-      <div className="space-y-2">
-        <label className="text-sm font-medium">{t("period")}</label>
-        <select
-          className="flex h-10 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          value={props.mode}
-          onChange={(event) =>
-            props.onModeChange(event.target.value as ChartMode)
-          }
-        >
-          <option value="daily">{t("daily")}</option>
-          <option value="weekly">{t("weekly")}</option>
-          <option value="monthly">{t("monthly")}</option>
-          <option value="yearly">{t("yearly")}</option>
-        </select>
-      </div>
-      {props.mode === "daily" ? (
-        <>
-          <InputLike
-            label={t("fromDate")}
-            type="date"
-            value={props.from}
-            onChange={props.onFromChange}
-          />
-          <InputLike
-            label={t("toDate")}
-            type="date"
-            value={props.to}
-            onChange={props.onToChange}
-          />
-        </>
-      ) : null}
-      {props.mode === "weekly" ? (
-        <InputLike
-          label={t("month")}
-          type="month"
-          value={props.month}
-          onChange={props.onMonthChange}
-        />
-      ) : null}
-      {props.mode === "monthly" ? (
-        <InputLike
-          label={t("year")}
-          type="number"
-          value={props.year}
-          onChange={props.onYearChange}
-        />
-      ) : null}
-      {props.mode === "yearly" ? (
-        <>
-          <InputLike
-            label={t("startYear")}
-            type="number"
-            value={props.startYear}
-            onChange={props.onStartYearChange}
-          />
-          <InputLike
-            label={t("endYear")}
-            type="number"
-            value={props.endYear}
-            onChange={props.onEndYearChange}
-          />
-        </>
-      ) : null}
-      <Button type="button" onClick={props.onApply} className="w-full lg:w-auto lg:self-end">
-        {t("apply")}
-      </Button>
-    </div>
-  );
-}
-
-function InputLike(props: {
-  label: string;
-  type: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="space-y-2 text-sm font-medium">
-      {props.label}
-      <input
-        className="flex h-10 w-full rounded-md border bg-background px-3 py-2 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        type={props.type}
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-      />
-    </label>
-  );
-}
-
-function SalesChartPanel(props: { title: string; rows: SalesChartPoint[] }) {
-  const { language, t } = useLanguage();
-  const maxValue = Math.max(
-    ...props.rows.map((row) => Number(row.netSales)),
-    1,
-  );
-  const height = 260;
-  const chartRows = props.rows.filter(
-    (row) => Number(row.netSales) > 0 || row.transactionCount > 0,
-  );
-
-  return (
-    <div className="rounded-lg border p-3 sm:p-4">
-      <div className="flex items-center gap-2">
-        <span className="rounded-md bg-primary/10 p-2 text-primary">
-          <BarChart3 className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="font-semibold">{props.title || t("salesChart")}</p>
-          <p className="text-sm text-muted-foreground">
-            {props.rows.length} {t("period")}
-          </p>
-        </div>
-      </div>
-      <div className="mt-4 overflow-x-auto pb-1">
-        {chartRows.length ? (
-          <div
-            className="flex min-w-[420px] items-end gap-2 border-b border-l px-2 pt-4 sm:min-w-[560px] sm:gap-3 sm:px-3"
-            style={{ height }}
+    <div className="flex w-full justify-end lg:w-auto">
+      <div className="flex max-w-full flex-col items-end gap-2 rounded-lg border bg-muted/30 p-2">
+        <div className="inline-flex h-9 overflow-hidden rounded-md border bg-background p-0.5">
+        {modes.map((mode) => (
+          <button
+            key={mode.value}
+            type="button"
+            className={`rounded px-3 text-xs font-semibold transition-colors ${props.mode === mode.value ? "bg-blue-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            onClick={() => props.onModeChange(mode.value)}
           >
-            {props.rows.map((row) => {
-              const value = Number(row.netSales);
-              const barHeight = Math.max(2, (value / maxValue) * (height - 82));
-              return (
-                <div
-                  key={row.label}
-                  className="flex min-w-12 flex-1 flex-col items-center justify-end gap-2 sm:min-w-16"
-                >
-                  <div className="max-w-16 truncate text-center text-[11px] font-medium sm:max-w-none sm:text-xs">
-                    {currency(row.netSales, language)}
-                  </div>
-                  <div
-                    className="w-full max-w-10 rounded-t-md bg-primary sm:max-w-14"
-                    style={{ height: `${barHeight}px` }}
-                    title={`${row.label}: ${currency(row.netSales, language)} (${row.transactionCount} ${t("transactions")})`}
-                  />
-                  <div className="h-10 text-center text-[11px] text-muted-foreground sm:text-xs">
-                    <span className="line-clamp-2">{row.label}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground sm:p-6">
-            {t("noSalesChartData")}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TopProductsPanel(props: { item: TopProductsByOutlet }) {
-  const { language, t } = useLanguage();
-  const maxQty = Math.max(
-    ...props.item.products.map((product) => Number(product.quantitySold)),
-    1,
-  );
-  return (
-    <div className="rounded-lg border p-3 sm:p-4">
-      <div className="flex items-center gap-2">
-        <span className="rounded-md bg-amber-50 p-2 text-amber-700">
-          <Trophy className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="truncate font-semibold">{props.item.outlet.name}</p>
-          <p className="text-sm text-muted-foreground">
-            {props.item.outlet.code}
-          </p>
+            {mode.label}
+          </button>
+        ))}
+        </div>
+        <div className="thin-x-scroll flex max-w-full items-center justify-end gap-2 overflow-x-auto">
+          {props.mode === "range" ? <><MiniInput type="date" value={props.from} onChange={props.onFromChange} /><MiniInput type="date" value={props.to} onChange={props.onToChange} /></> : null}
+          {props.mode === "daily" ? <MiniInput type="date" value={props.date} onChange={props.onDateChange} /> : null}
+          {props.mode === "monthly" ? <MiniInput type="month" value={props.month} onChange={props.onMonthChange} /> : null}
+          {props.mode === "yearly" ? <MiniInput type="number" value={props.year} onChange={props.onYearChange} /> : null}
+          <Button type="button" className="h-9 shrink-0 px-4" onClick={props.onApply}>Apply</Button>
         </div>
       </div>
-      <div className="mt-4 space-y-3">
-        {props.item.products.length ? (
-          props.item.products.map((product, index) => {
-            const percent = Math.max(
-              6,
-              (Number(product.quantitySold) / maxQty) * 100,
-            );
-            return (
-              <div
-                key={product.skuId}
-                className="rounded-md border bg-muted/20 p-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">
-                      {index + 1}. {product.skuName}
-                    </p>
-                    <p className="text-sm leading-5 text-muted-foreground">
-                      {formatNumber(product.quantitySold, 3, language)}{" "}
-                      {product.unitCode || "unit"} {t("sold")} -{" "}
-                      {currency(product.netSales, language)}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-amber-500"
-                    style={{ width: `${percent}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <p className="text-sm text-muted-foreground">{t("noProductsSold")}</p>
-        )}
-      </div>
     </div>
   );
 }
 
-function StatTile(props: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  detail?: string;
-}) {
+function MiniInput(props: { type: string; value: string; onChange: (value: string) => void }) {
+  return <input className="h-9 w-[9.25rem] rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" type={props.type} value={props.value} onChange={(event) => props.onChange(event.target.value)} />;
+}
+
+function SalesAreaChart(props: { rows: SalesChartPoint[] }) {
+  const { language } = useLanguage();
+  const rows = props.rows;
+  const values = rows.map((row) => Number(row.netSales));
+  const maxValue = Math.max(...values, 1);
+  const width = 720;
+  const height = 260;
+  const padX = 34;
+  const padY = 24;
+  const points = rows.map((row, index) => {
+    const x = rows.length <= 1 ? width / 2 : padX + (index / (rows.length - 1)) * (width - padX * 2);
+    const y = height - padY - (Number(row.netSales) / maxValue) * (height - padY * 2);
+    return { x, y, row };
+  });
+  const line = points.map((point) => `${point.x},${point.y}`).join(" ");
+  const area = points.length ? `${padX},${height - padY} ${line} ${width - padX},${height - padY}` : "";
+
   return (
-    <div className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
-      <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
-        <props.icon className="h-5 w-5 text-primary" />
-        {props.detail ? (
-          <p className="truncate text-xs text-muted-foreground sm:hidden">{props.detail}</p>
-        ) : null}
-      </div>
-      <p className="text-sm text-muted-foreground">{props.label}</p>
-      <p className="mt-1 break-words text-xl font-semibold sm:text-2xl">{props.value}</p>
-      {props.detail ? (
-        <p className="mt-2 hidden text-sm text-muted-foreground sm:block">{props.detail}</p>
-      ) : null}
+    <div className="mt-4 thin-x-scroll overflow-x-auto">
+      {rows.length ? (
+        <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[680px] overflow-visible rounded-lg bg-[linear-gradient(180deg,#eff6ff_0%,#ffffff_55%,#f8fafc_100%)]">
+          <defs>
+            <linearGradient id="salesArea" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#2563eb" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
+            </linearGradient>
+            <linearGradient id="salesLine" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="#2563eb" />
+              <stop offset="45%" stopColor="#16a34a" />
+              <stop offset="100%" stopColor="#f59e0b" />
+            </linearGradient>
+          </defs>
+          {[0, 1, 2, 3].map((lineIndex) => <line key={lineIndex} x1={padX} x2={width - padX} y1={padY + lineIndex * 54} y2={padY + lineIndex * 54} stroke="#e5e7eb" strokeDasharray="4 4" />)}
+          <polygon points={area} fill="url(#salesArea)" />
+          <polyline points={line} fill="none" stroke="url(#salesLine)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((point, index) => (
+            <g key={point.row.label} className="cursor-pointer">
+              <circle cx={point.x} cy={point.y} r="10" fill={chartColors[index % chartColors.length]} opacity="0.12" />
+              <circle cx={point.x} cy={point.y} r="4.5" fill={chartColors[index % chartColors.length]} stroke="#ffffff" strokeWidth="2">
+                <title>{`${point.row.label}: ${currency(point.row.netSales, language)} (${point.row.transactionCount} transaksi)`}</title>
+              </circle>
+            </g>
+          ))}
+          {points.map((point, index) => index % Math.ceil(points.length / 6 || 1) === 0 ? <text key={point.row.label} x={point.x} y={height - 6} textAnchor="middle" className="fill-slate-500 text-[11px]">{point.row.label}</text> : null)}
+        </svg>
+      ) : (
+        <div className="rounded-lg border bg-muted/20 p-6 text-sm text-muted-foreground">Belum ada data penjualan pada periode ini.</div>
+      )}
     </div>
   );
 }
 
-function AlertPanel(props: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  tone: "danger" | "warning";
-  rows: Array<{ key: string; title: string; detail: string }>;
-  emptyText: string;
-}) {
-  const { t } = useLanguage();
-  const toneClass =
-    props.tone === "danger"
-      ? "text-destructive bg-red-50"
-      : "text-amber-700 bg-amber-50";
+function DonutPanel(props: { title: string; label: string; detail: string; segments: Array<{ label: string; value: number; color: string }> }) {
+  const total = props.segments.reduce((sum, item) => sum + item.value, 0);
+  const radius = 38;
+  const circumference = 2 * Math.PI * radius;
+  const segments = props.segments.map((segment, index) => {
+    const previous = props.segments.slice(0, index).reduce((sum, item) => sum + item.value, 0);
+    const dash = total ? (segment.value / total) * circumference : 0;
+    const offset = total ? -(previous / total) * circumference : 0;
+    return { ...segment, dash, offset };
+  });
   return (
-    <div className="rounded-lg border p-3 sm:p-4">
-      <div className="flex items-center gap-2">
-        <span className={`rounded-md p-2 ${toneClass}`}>
-          <props.icon className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="font-semibold">{props.title}</p>
-          <p className="text-sm text-muted-foreground">
-            {props.rows.length} {t("alert")}
-          </p>
+    <div className="rounded-lg border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">{props.title}</p>
+          <p className="text-xs text-muted-foreground">{props.detail}</p>
         </div>
+        <svg viewBox="0 0 100 100" className="h-28 w-28 shrink-0 -rotate-90 rounded-full bg-muted/25 p-1">
+          <circle cx="50" cy="50" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="12" />
+          {segments.map((segment) => <circle key={segment.label} cx="50" cy="50" r={radius} fill="none" stroke={segment.color} strokeWidth="12" strokeDasharray={`${segment.dash} ${circumference - segment.dash}`} strokeDashoffset={segment.offset} strokeLinecap="round"><title>{`${segment.label}: ${segment.value}`}</title></circle>)}
+          <text x="50" y="51" textAnchor="middle" dominantBaseline="middle" className="rotate-90 fill-slate-900 text-[13px] font-semibold">{props.label}</text>
+        </svg>
       </div>
-      <div className="mt-4 space-y-2">
-        {props.rows.length ? (
-          props.rows.slice(0, 8).map((row) => (
-            <div key={row.key} className="rounded-md border bg-muted/25 p-3">
-              <p className="font-medium">{row.title}</p>
-              <p className="text-sm text-muted-foreground">{row.detail}</p>
+      <div className="mt-3 grid gap-2">
+        {props.segments.map((segment) => <div key={segment.label} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/50"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />{segment.label}</span><span className="font-semibold">{segment.value}</span></div>)}
+      </div>
+    </div>
+  );
+}
+
+function TopProductBars(props: { products: Array<TopProductsByOutlet["products"][number] & { outletName: string }> }) {
+  const { language } = useLanguage();
+  const maxQty = Math.max(...props.products.map((item) => Number(item.quantitySold)), 1);
+  const barColors = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-rose-500", "bg-violet-500", "bg-cyan-500", "bg-lime-500", "bg-orange-500"];
+  if (!props.products.length) return <p className="mt-4 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">Belum ada produk terjual.</p>;
+  return (
+    <div className="mt-4 space-y-3">
+      {props.products.map((product, index) => {
+        const value = Number(product.quantitySold);
+        return (
+          <div key={`${product.skuId}-${index}`} className="grid gap-2 rounded-lg border border-transparent p-2 transition-colors hover:border-slate-200 hover:bg-muted/30">
+            <div className="flex items-start justify-between gap-3 text-sm">
+              <div className="min-w-0"><p className="truncate font-medium">{index + 1}. {product.skuName}</p><p className="truncate text-xs text-muted-foreground">{product.outletName} - {formatNumber(product.quantitySold, 3, language)} {product.unitCode}</p></div>
+              <span className="shrink-0 font-semibold">{currency(product.netSales, language)}</span>
             </div>
-          ))
-        ) : (
-          <p className="text-sm text-muted-foreground">{props.emptyText}</p>
-        )}
-      </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full transition-all ${barColors[index % barColors.length]}`} style={{ width: `${Math.max(4, (value / maxQty) * 100)}%` }} /></div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function stockAlertRow(item: StockAlert, t: (key: string) => string) {
-  return {
-    key: `${item.outletCode}-${item.skuCode}`,
-    title: `${item.skuName} (${item.skuCode})`,
-    detail: `${item.outletName} - ${t("stock")} ${formatNumber(item.availableBaseQty ?? item.onHandBaseQty)} ${item.baseUnitCode || "unit"} / ${t("min")} ${formatNumber(item.minStockBaseQty)} ${item.baseUnitCode || "unit"}`,
-  };
+function AlertSummary(props: { summary: DashboardSummary | null }) {
+  const lowStock = props.summary?.alerts.lowStock ?? [];
+  const emptyStock = props.summary?.alerts.emptyStock ?? [];
+  const closed = props.summary?.alerts.closedOutlets ?? [];
+  const rows = [
+    ...emptyStock.slice(0, 4).map((item) => ({ tone: "danger" as const, title: item.skuName, detail: `${item.outletName} - stok kosong` })),
+    ...lowStock.slice(0, 4).map((item) => ({ tone: "warning" as const, title: item.skuName, detail: `${item.outletName} - stok ${formatNumber(item.availableBaseQty ?? item.onHandBaseQty)} ${item.baseUnitCode}` })),
+    ...closed.slice(0, 3).map((item) => ({ tone: "slate" as const, title: item.name, detail: `${item.code} - outlet nonaktif` })),
+  ].slice(0, 8);
+  if (!rows.length) return <p className="mt-4 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">Tidak ada alert operasional.</p>;
+  return (
+    <div className="mt-4 space-y-2">
+      {rows.map((row, index) => <div key={`${row.title}-${index}`} className="flex items-start gap-3 rounded-lg border bg-background p-3 transition-colors hover:bg-muted/35"><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${row.tone === "danger" ? "bg-red-500" : row.tone === "warning" ? "bg-amber-500" : "bg-slate-400"}`} /><div className="min-w-0"><p className="truncate text-sm font-medium">{row.title}</p><p className="truncate text-xs text-muted-foreground">{row.detail}</p></div></div>)}
+    </div>
+  );
+}
+
+function MetricCard(props: { icon: ComponentType<{ className?: string }>; label: string; value: string; detail: string; tone: "blue" | "green" | "amber" | "violet" }) {
+  const theme = {
+    blue: { icon: "border-blue-100 bg-blue-50 text-blue-700", bar: "bg-blue-500", shell: "hover:border-blue-200 hover:bg-blue-50/35" },
+    green: { icon: "border-emerald-100 bg-emerald-50 text-emerald-700", bar: "bg-emerald-500", shell: "hover:border-emerald-200 hover:bg-emerald-50/35" },
+    amber: { icon: "border-amber-100 bg-amber-50 text-amber-700", bar: "bg-amber-500", shell: "hover:border-amber-200 hover:bg-amber-50/35" },
+    violet: { icon: "border-violet-100 bg-violet-50 text-violet-700", bar: "bg-violet-500", shell: "hover:border-violet-200 hover:bg-violet-50/35" },
+  }[props.tone];
+  return (
+    <div className={`group rounded-lg border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${theme.shell}`}>
+      <div className="flex items-center justify-between gap-3"><span className={`rounded-lg border p-2 transition-transform group-hover:scale-105 ${theme.icon}`}><props.icon className="h-5 w-5" /></span><span className="rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">Live</span></div>
+      <p className="mt-4 text-sm text-muted-foreground">{props.label}</p>
+      <p className="mt-1 break-words text-2xl font-semibold tracking-normal">{props.value}</p>
+      <p className="mt-2 text-xs text-muted-foreground">{props.detail}</p>
+      <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted"><div className={`h-full w-2/3 rounded-full transition-all group-hover:w-full ${theme.bar}`} /></div>
+    </div>
+  );
+}
+
+function ChartTitle(props: { icon: ComponentType<{ className?: string }>; title: string; detail: string }) {
+  return <div className="flex items-center gap-3"><span className="rounded-lg bg-primary/10 p-2 text-primary"><props.icon className="h-5 w-5" /></span><div><p className="font-semibold">{props.title}</p><p className="text-sm text-muted-foreground">{props.detail}</p></div></div>;
+}
+
+function percent(value: number, total: number) {
+  return total ? Math.round((value / total) * 100) : 0;
+}
+
+function chartModeToApiMode(mode: ChartMode) {
+  if (mode === "monthly") return "weekly";
+  if (mode === "yearly") return "monthly";
+  return "daily";
 }
 
 function currency(value?: string | number, language: "id" = "id") {
   return `Rp ${formatNumber(value, 0, language)}`;
 }
 
-function formatNumber(
-  value?: string | number,
-  maximumFractionDigits = 3,
-  language: "id" = "id",
-) {
-  return Number(value ?? 0).toLocaleString(
-    "id-ID",
-    {
-      minimumFractionDigits: 0,
-      maximumFractionDigits,
-    },
-  );
+function formatNumber(value?: string | number, maximumFractionDigits = 3, language: "id" = "id") {
+  return Number(value ?? 0).toLocaleString("id-ID", { minimumFractionDigits: 0, maximumFractionDigits });
 }
 
 function toDateInput(value: Date) {

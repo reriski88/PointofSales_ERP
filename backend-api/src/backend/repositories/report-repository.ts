@@ -106,6 +106,7 @@ export const reportRepository = {
             'unitPrice', line.unit_price,
             'discountTotal', line.discount_total,
             'lineTotal', line.line_total,
+            'trackInventory', item_sku.track_inventory,
             'voidWindowHours', item_product.void_window_hours,
             'refundWindowHours', item_product.refund_window_hours
           ) order by line.created_at)

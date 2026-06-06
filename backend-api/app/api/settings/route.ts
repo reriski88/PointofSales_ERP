@@ -1,8 +1,9 @@
 import { organizationRepository } from "@/backend/repositories/organization-repository";
 import { handleRouteError, ok, parseJson } from "@/lib/http";
+import { deleteReplacedImageObject } from "@/lib/local-image-storage";
 import { requireActor, requirePermission } from "@/lib/rbac";
 import { publishRealtimeEvent } from "@/lib/realtime";
-import { updateSettingsSchema } from "@/lib/validation";
+import { sanitizeReceiptLayoutSettings, updateSettingsSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,10 @@ export async function GET(request: Request) {
     const actor = await requireActor(request);
     const [row] = await organizationRepository.findSettings(actor.organizationId);
 
-    return ok(row);
+    return ok({
+      ...row,
+      receiptLayout: row.receiptLayout ? sanitizeReceiptLayoutSettings(row.receiptLayout) : row.receiptLayout,
+    });
   } catch (error) {
     return handleRouteError(error);
   }
@@ -31,18 +35,25 @@ export async function PATCH(request: Request) {
       await requirePermission(actor, "promotions", "edit");
     }
 
+    const receiptLayout = body.receiptLayout ? sanitizeReceiptLayoutSettings(body.receiptLayout) : body.receiptLayout;
+    const [existing] = await organizationRepository.findSettings(actor.organizationId);
+
     const [updated] = await organizationRepository.updateSettings(actor.organizationId, {
         ...(body.defaultOutletLogoUrl !== undefined
           ? { logoUrl: body.defaultOutletLogoUrl }
           : {}),
         ...(body.receiptLayout !== undefined
-          ? { receiptLayout: body.receiptLayout }
+          ? { receiptLayout }
           : {}),
         ...(body.posSettings !== undefined
           ? { posSettings: body.posSettings }
           : {}),
         updatedAt: new Date(),
       });
+
+    if (body.defaultOutletLogoUrl !== undefined) {
+      await deleteReplacedImageObject(existing?.defaultOutletLogoUrl, updated.defaultOutletLogoUrl);
+    }
 
     publishRealtimeEvent({
       organizationId: actor.organizationId,

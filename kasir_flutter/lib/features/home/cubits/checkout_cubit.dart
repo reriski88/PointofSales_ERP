@@ -14,6 +14,7 @@ class CheckoutState {
     required this.isBusy,
     required this.isOnline,
     required this.message,
+    required this.hasShiftSyncFailure,
   });
 
   factory CheckoutState.initial() {
@@ -23,6 +24,7 @@ class CheckoutState {
       isBusy: false,
       isOnline: false,
       message: '',
+      hasShiftSyncFailure: false,
     );
   }
 
@@ -31,6 +33,7 @@ class CheckoutState {
   final bool isBusy;
   final bool isOnline;
   final String message;
+  final bool hasShiftSyncFailure;
 
   CheckoutState copyWith({
     List<Map<String, dynamic>>? pendingSales,
@@ -38,6 +41,7 @@ class CheckoutState {
     bool? isBusy,
     bool? isOnline,
     String? message,
+    bool? hasShiftSyncFailure,
   }) {
     return CheckoutState(
       pendingSales: pendingSales ?? this.pendingSales,
@@ -45,6 +49,7 @@ class CheckoutState {
       isBusy: isBusy ?? this.isBusy,
       isOnline: isOnline ?? this.isOnline,
       message: message ?? this.message,
+      hasShiftSyncFailure: hasShiftSyncFailure ?? this.hasShiftSyncFailure,
     );
   }
 }
@@ -99,6 +104,10 @@ class CheckoutCubit extends Cubit<CheckoutState> {
     required double grandTotal,
     required double cashTenderedTotal,
     required double changeTotal,
+    required String customerId,
+    required bool hasReceivablePayment,
+    required double receivableAmount,
+    required double nonCashOverpaid,
     required List<String> promotionCodes,
     required String? stockMessage,
     required bool hasEmptySplitAmount,
@@ -109,6 +118,9 @@ class CheckoutCubit extends Cubit<CheckoutState> {
       lines: lines,
       payments: payments,
       grandTotal: grandTotal,
+      customerId: customerId,
+      hasReceivablePayment: hasReceivablePayment,
+      nonCashOverpaid: nonCashOverpaid,
       stockMessage: stockMessage,
       hasEmptySplitAmount: hasEmptySplitAmount,
     );
@@ -123,6 +135,8 @@ class CheckoutCubit extends Cubit<CheckoutState> {
       lines: lines,
       payments: payments,
       cashTenderedTotal: cashTenderedTotal,
+      customerId: customerId,
+      allowReceivable: hasReceivablePayment && receivableAmount > 0,
       discount: manualDiscount,
       promotionCodes: promotionCodes,
       manualTax: manualTax,
@@ -132,6 +146,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
     final localReceiptData = ReceiptData.fromCart(
       receiptNumber: payload['receiptNumber']?.toString() ?? '-',
       outletName: outlet.name,
+      outletAddress: outlet.address,
       cashierName: cashierName,
       createdAt: DateTime.now(),
       lines: List<CartLine>.from(lines),
@@ -146,6 +161,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
       payments: payments,
       cashTenderedTotal: cashTenderedTotal,
       changeTotal: changeTotal,
+      receivableAmount: receivableAmount,
     );
 
     emit(state.copyWith(isBusy: true, message: ''));
@@ -159,6 +175,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
                   payload['receiptNumber']?.toString() ??
                   '-',
               outletName: outlet.name,
+              outletAddress: outlet.address,
               cashierName: cashierName,
               createdAt: DateTime.now(),
               lines: List<CartLine>.from(lines),
@@ -194,6 +211,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
                 serverSale['changeTotal'],
                 fallback: changeTotal,
               ),
+              receivableAmount: receivableAmount,
             )
           : localReceiptData;
       final message =
@@ -244,7 +262,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
       emit(state.copyWith(message: 'Tidak ada antrean sync.'));
       return;
     }
-    emit(state.copyWith(isBusy: true, message: ''));
+    emit(state.copyWith(isBusy: true, message: '', hasShiftSyncFailure: false));
     try {
       final byOutlet = <String, List<Map<String, dynamic>>>{};
       for (final sale in state.pendingSales) {
@@ -256,25 +274,37 @@ class CheckoutCubit extends Cubit<CheckoutState> {
       }
 
       final completedKeys = <String>{};
+      final reviewKeys = <String>{};
       var conflictCount = 0;
       var failedCount = 0;
+      var shiftFailureCount = 0;
       for (final entry in byOutlet.entries) {
         final results = await api.pushSync(entry.key, entry.value);
         for (final result in results) {
           final key = result['idempotencyKey']?.toString();
           final status = result['status']?.toString();
+          final error = result['error']?.toString() ?? '';
           if (key != null && status == 'processed') {
             completedKeys.add(key);
           }
+          if (key != null && status == 'conflict') {
+            reviewKeys.add(key);
+          }
           if (status == 'conflict') conflictCount += 1;
-          if (status == 'failed') failedCount += 1;
+          if (status == 'failed') {
+            failedCount += 1;
+            if (_isShiftSyncFailure(error)) {
+              shiftFailureCount += 1;
+            }
+          }
         }
       }
 
       final pendingSales = state.pendingSales
           .where(
             (sale) =>
-                !completedKeys.contains(sale['idempotencyKey']?.toString()),
+                !completedKeys.contains(sale['idempotencyKey']?.toString()) &&
+                !reviewKeys.contains(sale['idempotencyKey']?.toString()),
           )
           .toList();
       await _savePendingSales(prefs, pendingSales);
@@ -290,6 +320,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
             quantity: _asDouble(waste['quantity']),
             unitId: waste['unitId']?.toString() ?? '',
             reason: waste['reason']?.toString() ?? 'other',
+            idempotencyKey: key,
             note: waste['note']?.toString(),
           );
           if (key.isNotEmpty) {
@@ -316,7 +347,11 @@ class CheckoutCubit extends Cubit<CheckoutState> {
         if (completedWasteKeys.isNotEmpty)
           '${completedWasteKeys.length} remahan tersinkron',
         if (conflictCount > 0) '$conflictCount konflik stok belum diposting',
-        if (failedCount > 0) '$failedCount transaksi gagal sync',
+        if (reviewKeys.isNotEmpty) 'Cek menu laporan web: status Perlu review',
+        if (shiftFailureCount > 0)
+          '$shiftFailureCount transaksi gagal karena shift lokal sudah tidak aktif. Buka shift baru, lalu coba sync lagi',
+        if (failedCount - shiftFailureCount > 0)
+          '${failedCount - shiftFailureCount} transaksi gagal sync',
         if (failedWasteCount > 0) '$failedWasteCount remahan gagal sync',
         if (completedKeys.isEmpty &&
             completedWasteKeys.isEmpty &&
@@ -331,6 +366,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
           pendingWastes: pendingWastes,
           isOnline: true,
           message: message,
+          hasShiftSyncFailure: shiftFailureCount > 0,
         ),
       );
     } catch (error) {
@@ -414,6 +450,9 @@ class CheckoutCubit extends Cubit<CheckoutState> {
     required List<CartLine> lines,
     required List<SalesPayment> payments,
     required double grandTotal,
+    required String customerId,
+    required bool hasReceivablePayment,
+    required double nonCashOverpaid,
     required String? stockMessage,
     required bool hasEmptySplitAmount,
   }) {
@@ -432,14 +471,20 @@ class CheckoutCubit extends Cubit<CheckoutState> {
     if (hasEmptySplitAmount) {
       return 'Nominal setiap pembayaran split wajib lebih dari 0.';
     }
-    if (payments.isEmpty) {
+    if (hasReceivablePayment && customerId.trim().isEmpty) {
+      return 'Pilih pelanggan terlebih dahulu untuk transaksi piutang.';
+    }
+    if (payments.isEmpty && !hasReceivablePayment) {
       return 'Tambahkan minimal satu pembayaran.';
+    }
+    if (nonCashOverpaid > 0) {
+      return 'Pembayaran non-tunai berlebih. Kembalian hanya berlaku untuk tunai.';
     }
     final paidTotal = payments.fold<double>(
       0,
       (sum, item) => sum + item.amount,
     );
-    if (paidTotal + 0.000001 < grandTotal) {
+    if (!hasReceivablePayment && paidTotal + 0.000001 < grandTotal) {
       return 'Total pembayaran masih kurang.';
     }
     return null;
@@ -451,6 +496,8 @@ class CheckoutCubit extends Cubit<CheckoutState> {
     required List<CartLine> lines,
     required List<SalesPayment> payments,
     required double cashTenderedTotal,
+    required String customerId,
+    required bool allowReceivable,
     required double discount,
     required List<String> promotionCodes,
     required double manualTax,
@@ -482,6 +529,9 @@ class CheckoutCubit extends Cubit<CheckoutState> {
           )
           .toList(),
       'cashTenderedTotal': cashTenderedTotal,
+      if (customerId.trim().isNotEmpty) 'customerId': customerId.trim(),
+      'allowReceivable': allowReceivable,
+      if (allowReceivable) 'receivableNote': 'Piutang dari kasir mobile',
       'discountTotal': discount,
       'promotionCodes': promotionCodes,
       'taxTotal': manualTax,
@@ -518,6 +568,12 @@ class CheckoutCubit extends Cubit<CheckoutState> {
           .toList();
     }
     return [];
+  }
+
+  bool _isShiftSyncFailure(String error) {
+    final normalized = error.toLowerCase();
+    return normalized.contains('shift') &&
+        (normalized.contains('open') || normalized.contains('aktif'));
   }
 }
 

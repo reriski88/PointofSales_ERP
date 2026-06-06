@@ -319,6 +319,7 @@ export const unit = pgTable(
     code: text("code").notNull(),
     kind: unitKindEnum("kind").notNull(),
     toBaseFactor: numeric("to_base_factor", { precision: 18, scale: 6 }).notNull().default("1"),
+    isActive: boolean("is_active").notNull().default(true),
     ...timestamps,
   },
   (table) => ({
@@ -333,8 +334,11 @@ export const product = pgTable(
     organizationId: uuid("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    outletId: uuid("outlet_id"),
+    globalProductId: uuid("global_product_id"),
     name: text("name").notNull(),
     category: text("category"),
+    imageUrl: text("image_url"),
     voidWindowHours: integer("void_window_hours").default(0),
     refundWindowHours: integer("refund_window_hours").default(0),
     isActive: boolean("is_active").notNull().default(true),
@@ -342,6 +346,7 @@ export const product = pgTable(
   },
   (table) => ({
     productOrgNameIdx: index("product_org_name_idx").on(table.organizationId, table.name),
+    productGlobalIdx: index("product_global_idx").on(table.organizationId, table.globalProductId),
   }),
 );
 
@@ -355,9 +360,11 @@ export const sku = pgTable(
     productId: uuid("product_id")
       .notNull()
       .references(() => product.id, { onDelete: "cascade" }),
+    globalSkuId: uuid("global_sku_id"),
     sku: text("sku").notNull(),
     barcode: text("barcode"),
     name: text("name").notNull(),
+    imageUrl: text("image_url"),
     baseUnitId: uuid("base_unit_id")
       .notNull()
       .references(() => unit.id),
@@ -368,12 +375,14 @@ export const sku = pgTable(
     price: numeric("price", { precision: 14, scale: 2 }).notNull().default("0"),
     cost: numeric("cost", { precision: 14, scale: 6 }).notNull().default("0"),
     minStockBaseQty: numeric("min_stock_base_qty", { precision: 18, scale: 3 }).notNull().default("0"),
+    trackInventory: boolean("track_inventory").notNull().default(true),
+    quantityMode: text("quantity_mode").notNull().default("required"),
     isActive: boolean("is_active").notNull().default(true),
     ...timestamps,
   },
   (table) => ({
-    skuOrgSkuIdx: uniqueIndex("sku_org_sku_idx").on(table.organizationId, table.sku),
     skuBarcodeIdx: index("sku_barcode_idx").on(table.barcode),
+    skuGlobalIdx: index("sku_global_idx").on(table.organizationId, table.globalSkuId),
   }),
 );
 
@@ -852,6 +861,7 @@ export const wasteAdjustment = pgTable(
       .notNull()
       .references(() => unit.id),
     quantityBase: numeric("quantity_base", { precision: 18, scale: 3 }).notNull(),
+    idempotencyKey: text("idempotency_key"),
     estimatedLoss: numeric("estimated_loss", { precision: 14, scale: 2 }).notNull(),
     reason: wasteReasonEnum("reason").notNull(),
     note: text("note"),
@@ -867,6 +877,7 @@ export const wasteAdjustment = pgTable(
   },
   (table) => ({
     wasteOutletCreatedIdx: index("waste_outlet_created_idx").on(table.outletId, table.createdAt),
+    wasteIdempotencyIdx: uniqueIndex("waste_idempotency_idx").on(table.organizationId, table.idempotencyKey),
   }),
 );
 

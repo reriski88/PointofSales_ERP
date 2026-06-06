@@ -25,8 +25,8 @@ export async function POST(request: Request) {
     const body = await parseJson(request, createUnitSchema);
     const [row] = await unitRepository.create({
         organizationId: actor.organizationId,
-        name: body.name,
-        code: body.code,
+        name: body.name.trim(),
+        code: body.code.trim().toUpperCase(),
         kind: body.kind,
         toBaseFactor: fixed(body.toBaseFactor, 6),
       });

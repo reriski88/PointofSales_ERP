@@ -29,8 +29,48 @@ export const shiftRepository = {
       .limit(1);
   },
 
+  listPendingVariance(organizationId: string, outletId: string) {
+    return db
+      .select({
+        id: shift.id,
+        outletId: shift.outletId,
+        cashierUserId: shift.cashierUserId,
+        cashierName: user.name,
+        status: shift.status,
+        openingCash: shift.openingCash,
+        expectedCash: shift.expectedCash,
+        actualCash: shift.actualCash,
+        cashVariance: shift.cashVariance,
+        closeApprovalStatus: shift.closeApprovalStatus,
+        varianceReason: shift.varianceReason,
+        openedAt: shift.openedAt,
+        closedAt: shift.closedAt,
+      })
+      .from(shift)
+      .leftJoin(user, eq(user.id, shift.cashierUserId))
+      .where(and(
+        eq(shift.organizationId, organizationId),
+        eq(shift.outletId, outletId),
+        eq(shift.status, "closed"),
+        eq(shift.closeApprovalStatus, "variance_pending"),
+      ))
+      .orderBy(desc(shift.closedAt));
+  },
+
   close(id: string, values: Partial<typeof shift.$inferInsert>) {
     return db.update(shift).set(values).where(eq(shift.id, id)).returning();
+  },
+
+  approveVariance(id: string, organizationId: string, supervisorUserId: string) {
+    return db
+      .update(shift)
+      .set({
+        closeApprovalStatus: "variance_approved",
+        supervisorUserId,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(shift.id, id), eq(shift.organizationId, organizationId), eq(shift.closeApprovalStatus, "variance_pending")))
+      .returning();
   },
 
   closeTx(tx: Tx, id: string, values: Partial<typeof shift.$inferInsert>) {

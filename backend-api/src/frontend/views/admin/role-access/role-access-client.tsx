@@ -65,6 +65,12 @@ export function RoleAccessClient() {
     () => permissions?.[selectedRole],
     [permissions, selectedRole],
   );
+  const roleStats = useMemo(() => {
+    const total = menus.reduce((sum, menu) => sum + menu.actions.length, 0);
+    const active = menus.reduce((sum, menu) => sum + (selectedPermissions?.[menu.key]?.length ?? 0), 0);
+    const fullMenus = menus.filter((menu) => menu.actions.length > 0 && menu.actions.every((action) => (selectedPermissions?.[menu.key] ?? []).includes(action))).length;
+    return { total, active, fullMenus };
+  }, [menus, selectedPermissions]);
 
   async function loadData() {
     setIsLoading(true);
@@ -163,6 +169,7 @@ export function RoleAccessClient() {
     <CollapsibleSection
       title="Setting Role Akses"
       description="Atur akses setiap role sesuai fungsi aplikasi POS: kasir, produk, inventory, laporan, laporan keuangan, dan pengaturan."
+      showDescription
       isLoading={isLoading}
       loadingText="Memuat setting role akses..."
       actions={
@@ -183,8 +190,14 @@ export function RoleAccessClient() {
     >
       <AlertMessage message={message} />
 
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <RoleMetric label="Permission aktif" value={`${roleStats.active}/${roleStats.total}`} tone="blue" />
+        <RoleMetric label="Menu akses penuh" value={`${roleStats.fullMenus} menu`} tone="emerald" />
+        <RoleMetric label="Role dipilih" value={roleLabels?.[selectedRole] ?? selectedRole} tone={selectedRole === "owner" ? "amber" : "violet"} />
+      </div>
+
       <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr]">
-        <div className="rounded-lg border bg-muted/25 p-2">
+        <div className="rounded-lg border bg-muted/25 p-2 shadow-sm">
           {roleOrder.map((role) => (
             <button
               key={role}
@@ -192,8 +205,8 @@ export function RoleAccessClient() {
               title={roleDescriptions?.[role] ?? role}
               className={`flex h-10 w-full items-center justify-between rounded-md px-3 text-left text-sm font-medium ${
                 selectedRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "hover:bg-background"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "hover:bg-background hover:text-foreground"
               }`}
               onClick={() => setSelectedRole(role)}
             >
@@ -203,9 +216,9 @@ export function RoleAccessClient() {
           ))}
         </div>
 
-        <div className="overflow-x-auto rounded-lg border">
+        <div className="thin-x-scroll overflow-x-auto rounded-xl border bg-card shadow-sm">
           <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-muted/40">
+            <thead className="border-b bg-background text-xs font-semibold text-foreground">
               <tr>
                 <th className="w-56 px-3 py-3 text-left font-semibold">Menu</th>
                 <th className="w-28 px-3 py-3 text-left font-semibold">Semua</th>
@@ -228,7 +241,7 @@ export function RoleAccessClient() {
                   menu.actions.length > 0 &&
                   menu.actions.every((action) => activeActions.includes(action));
                 return (
-                  <tr key={menu.key} className="border-t">
+                  <tr key={menu.key} className="border-b transition-colors hover:bg-muted/25 last:border-b-0">
                     <td className="px-3 py-3 font-medium">
                       <span className="inline-flex items-center gap-2" title={menu.description}>
                         {menu.label}
@@ -248,6 +261,7 @@ export function RoleAccessClient() {
                         }
                         aria-label={`Semua akses ${menu.label}`}
                         title={`Aktifkan/nonaktifkan semua permission yang tersedia untuk menu ${menu.label}.`}
+                        className="h-4 w-4 accent-primary"
                       />
                     </td>
                     {actions.map((action) => {
@@ -262,6 +276,7 @@ export function RoleAccessClient() {
                               onChange={() => toggleAction(menu.key, action.key)}
                               aria-label={`${action.label} ${menu.label}`}
                               title={`${action.label} ${menu.label}: ${action.description}`}
+                              className="h-4 w-4 accent-primary"
                             />
                           ) : (
                             <span className="text-muted-foreground" title={`Aksi ${action.label} tidak dipakai pada menu ${menu.label}.`}>-</span>
@@ -289,6 +304,21 @@ export function RoleAccessClient() {
         </p>
       ) : null}
     </CollapsibleSection>
+  );
+}
+
+function RoleMetric(props: { label: string; value: string; tone: "blue" | "emerald" | "amber" | "violet" }) {
+  const tone = {
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    violet: "border-violet-200 bg-violet-50 text-violet-700",
+  }[props.tone];
+  return (
+    <div className={`rounded-lg border p-3 shadow-sm ${tone}`}>
+      <p className="text-xs opacity-80">{props.label}</p>
+      <p className="mt-1 truncate text-base font-semibold">{props.value}</p>
+    </div>
   );
 }
 

@@ -10,8 +10,43 @@ const paymentLabels = {
   'transfer': 'Transfer',
   'card': 'Kartu',
   'ewallet': 'E-Wallet',
+  'receivable': 'Piutang',
   'other': 'Lainnya',
 };
+
+class RealtimeEvent {
+  const RealtimeEvent({
+    required this.id,
+    required this.type,
+    required this.topics,
+    required this.createdAt,
+    this.outletId,
+    this.payload = const {},
+  });
+
+  factory RealtimeEvent.fromJson(Map<String, dynamic> json) {
+    return RealtimeEvent(
+      id: json['id']?.toString() ?? '',
+      type: json['type']?.toString() ?? '',
+      topics: ((json['topics'] as List?) ?? [])
+          .map((item) => item.toString())
+          .where((item) => item.isNotEmpty)
+          .toList(),
+      outletId: _nullableText(json['outletId']),
+      payload: json['payload'] is Map
+          ? Map<String, dynamic>.from(json['payload'] as Map)
+          : const {},
+      createdAt: _dateOrNull(json['createdAt']) ?? DateTime.now(),
+    );
+  }
+
+  final String id;
+  final String type;
+  final List<String> topics;
+  final String? outletId;
+  final Map<String, dynamic> payload;
+  final DateTime createdAt;
+}
 
 enum ReportRange {
   today('Hari Ini', 'Hari', Icons.today_outlined),
@@ -198,6 +233,7 @@ class SalesDetailItem {
     required this.unitPrice,
     required this.discountTotal,
     required this.lineTotal,
+    this.trackInventory = true,
   });
 
   final String name;
@@ -206,6 +242,7 @@ class SalesDetailItem {
   final double unitPrice;
   final double discountTotal;
   final double lineTotal;
+  final bool trackInventory;
 
   factory SalesDetailItem.fromJson(Map<String, dynamic> json) {
     return SalesDetailItem(
@@ -215,6 +252,7 @@ class SalesDetailItem {
       unitPrice: _asDouble(json['unitPrice']),
       discountTotal: _asDouble(json['discountTotal']),
       lineTotal: _asDouble(json['lineTotal']),
+      trackInventory: json['trackInventory'] != false,
     );
   }
 
@@ -225,6 +263,7 @@ class SalesDetailItem {
     'unitPrice': unitPrice,
     'discountTotal': discountTotal,
     'lineTotal': lineTotal,
+    'trackInventory': trackInventory,
   };
 }
 
@@ -242,6 +281,40 @@ class SalesPayment {
   }
 
   Map<String, dynamic> toJson() => {'method': method, 'amount': amount};
+}
+
+class Customer {
+  const Customer({
+    required this.id,
+    required this.code,
+    required this.name,
+    this.phone,
+    this.isActive = true,
+  });
+
+  final String id;
+  final String code;
+  final String name;
+  final String? phone;
+  final bool isActive;
+
+  factory Customer.fromJson(Map<String, dynamic> json) {
+    return Customer(
+      id: json['id']?.toString() ?? '',
+      code: json['code']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      phone: _nullableText(json['phone']),
+      isActive: json['isActive'] != false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'code': code,
+    'name': name,
+    'phone': phone,
+    'isActive': isActive,
+  };
 }
 
 class SaleQuote {
@@ -527,6 +600,7 @@ class ReceiptLine {
     required this.unitPrice,
     required this.lineTotal,
     this.discountTotal = 0,
+    this.trackInventory = true,
   });
 
   final String name;
@@ -535,6 +609,7 @@ class ReceiptLine {
   final double unitPrice;
   final double lineTotal;
   final double discountTotal;
+  final bool trackInventory;
 }
 
 class ReceiptPayment {
@@ -550,6 +625,7 @@ class ReceiptData {
   const ReceiptData({
     required this.receiptNumber,
     required this.outletName,
+    required this.outletAddress,
     required this.cashierName,
     required this.createdAt,
     required this.lines,
@@ -570,6 +646,7 @@ class ReceiptData {
   factory ReceiptData.fromCart({
     required String receiptNumber,
     required String outletName,
+    required String outletAddress,
     required String cashierName,
     required DateTime createdAt,
     required List<CartLine> lines,
@@ -584,10 +661,12 @@ class ReceiptData {
     required double cashTenderedTotal,
     required double changeTotal,
     String? logoUrl,
+    double receivableAmount = 0,
   }) {
     return ReceiptData(
       receiptNumber: receiptNumber,
       outletName: outletName,
+      outletAddress: outletAddress,
       cashierName: cashierName,
       createdAt: createdAt,
       logoUrl: logoUrl,
@@ -597,6 +676,7 @@ class ReceiptData {
               name: line.item.skuName,
               quantity: line.quantity,
               unitLabel: line.unitLabel,
+              trackInventory: line.item.trackInventory,
               unitPrice: line.unitPrice,
               lineTotal: line.lineTotal,
               discountTotal: line.lineDiscountTotal,
@@ -618,16 +698,19 @@ class ReceiptData {
           .toList(),
       cashTenderedTotal: cashTenderedTotal,
       changeTotal: changeTotal,
+      receivableAmount: receivableAmount,
     );
   }
 
   factory ReceiptData.fromSalesDetail(
     SalesDetail detail, {
     required String outletName,
+    String outletAddress = '',
   }) {
     return ReceiptData(
       receiptNumber: detail.receiptNumber,
       outletName: outletName,
+      outletAddress: outletAddress,
       cashierName: detail.cashierName,
       createdAt: detail.createdAt,
       logoUrl: detail.outletLogoUrl,
@@ -637,6 +720,7 @@ class ReceiptData {
               name: line.name,
               quantity: line.quantityInput,
               unitLabel: line.unitCode,
+              trackInventory: line.trackInventory,
               unitPrice: line.unitPrice,
               lineTotal: line.lineTotal,
               discountTotal: line.discountTotal,
@@ -664,7 +748,8 @@ class ReceiptData {
   factory ReceiptData.sample() {
     return ReceiptData(
       receiptNumber: 'TEST-PRINT',
-      outletName: 'POS ERP',
+      outletName: 'Smart POS ERP',
+      outletAddress: '',
       cashierName: 'Kasir',
       createdAt: DateTime.now(),
       logoUrl: null,
@@ -692,6 +777,7 @@ class ReceiptData {
 
   final String receiptNumber;
   final String outletName;
+  final String outletAddress;
   final String cashierName;
   final DateTime createdAt;
   final String? logoUrl;
@@ -762,6 +848,7 @@ class Outlet {
     required this.id,
     required this.name,
     required this.code,
+    this.address = '',
     this.logoUrl,
     this.isActive = true,
   });
@@ -769,6 +856,7 @@ class Outlet {
   final String id;
   final String name;
   final String code;
+  final String address;
   final String? logoUrl;
   final bool isActive;
 
@@ -777,6 +865,7 @@ class Outlet {
       id: json['id'].toString(),
       name: json['name']?.toString() ?? '',
       code: json['code']?.toString() ?? '',
+      address: json['address']?.toString() ?? '',
       logoUrl: json['logoUrl']?.toString(),
       isActive: json['isActive'] != false,
     );
@@ -802,9 +891,13 @@ class CatalogItem {
     required this.saleUnitId,
     required this.saleUnitToBaseFactor,
     this.category,
+    this.productImageUrl,
+    this.skuImageUrl,
     this.barcode,
     this.baseUnitId,
     this.baseUnitCode,
+    this.trackInventory = true,
+    this.quantityMode = 'required',
     this.onHandBaseQty = 0,
     this.reservedBaseQty = 0,
     this.holdBaseQty = 0,
@@ -819,15 +912,20 @@ class CatalogItem {
   final String saleUnitId;
   final double saleUnitToBaseFactor;
   final String? category;
+  final String? productImageUrl;
+  final String? skuImageUrl;
   final String? barcode;
   final String? baseUnitId;
   final String? baseUnitCode;
+  final bool trackInventory;
+  final String quantityMode;
   final double onHandBaseQty;
   final double reservedBaseQty;
   final double holdBaseQty;
 
-  double get availableBaseQty =>
-      max(0, onHandBaseQty - reservedBaseQty - holdBaseQty);
+  double get availableBaseQty => trackInventory
+      ? max(0, onHandBaseQty - reservedBaseQty - holdBaseQty)
+      : double.infinity;
   double get saleUnitPrice => price;
   double get baseUnitPrice {
     final factor = saleUnitToBaseFactor <= 0 ? 1 : saleUnitToBaseFactor;
@@ -880,9 +978,13 @@ class CatalogItem {
       saleUnitId: saleUnitId,
       saleUnitToBaseFactor: saleUnitToBaseFactor,
       category: category,
+      productImageUrl: productImageUrl,
+      skuImageUrl: skuImageUrl,
       barcode: barcode,
       baseUnitId: baseUnitId,
       baseUnitCode: baseUnitCode,
+      trackInventory: trackInventory,
+      quantityMode: quantityMode,
       onHandBaseQty: onHandBaseQty ?? this.onHandBaseQty,
       reservedBaseQty: reservedBaseQty ?? this.reservedBaseQty,
       holdBaseQty: holdBaseQty ?? this.holdBaseQty,
@@ -898,6 +1000,9 @@ class CatalogItem {
           json['product_name']?.toString() ??
           '',
       category: json['category']?.toString(),
+      productImageUrl: json['productImageUrl']?.toString(),
+      skuImageUrl:
+          json['skuImageUrl']?.toString() ?? json['imageUrl']?.toString(),
       skuId: json['skuId']?.toString() ?? json['sku_id']?.toString() ?? '',
       skuCode: json['skuCode']?.toString() ?? json['sku']?.toString() ?? '',
       barcode: json['barcode']?.toString(),
@@ -910,6 +1015,10 @@ class CatalogItem {
         fallback: 1,
       ),
       baseUnitCode: json['baseUnitCode']?.toString(),
+      trackInventory: json['trackInventory'] != false,
+      quantityMode: json['quantityMode']?.toString() == 'fixed_one'
+          ? 'fixed_one'
+          : 'required',
       onHandBaseQty: _asDouble(json['onHandBaseQty']),
       reservedBaseQty: _asDouble(json['reservedBaseQty']),
       holdBaseQty: _asDouble(json['holdBaseQty']),
@@ -920,6 +1029,8 @@ class CatalogItem {
     'productId': productId,
     'productName': productName,
     'category': category,
+    'productImageUrl': productImageUrl,
+    'skuImageUrl': skuImageUrl,
     'skuId': skuId,
     'skuCode': skuCode,
     'barcode': barcode,
@@ -929,6 +1040,8 @@ class CatalogItem {
     'saleUnitId': saleUnitId,
     'saleUnitToBaseFactor': saleUnitToBaseFactor,
     'baseUnitCode': baseUnitCode,
+    'trackInventory': trackInventory,
+    'quantityMode': quantityMode,
     'onHandBaseQty': onHandBaseQty,
     'reservedBaseQty': reservedBaseQty,
     'holdBaseQty': holdBaseQty,
@@ -955,12 +1068,22 @@ class Shift {
     required this.status,
     required this.expectedCash,
     required this.openingCash,
+    this.cashInTotal = 0,
+    this.cashOutTotal = 0,
+    this.actualCash,
+    this.cashVariance,
+    this.closeApprovalStatus,
   });
 
   final String id;
   final String status;
   final double expectedCash;
   final double openingCash;
+  final double cashInTotal;
+  final double cashOutTotal;
+  final double? actualCash;
+  final double? cashVariance;
+  final String? closeApprovalStatus;
 
   factory Shift.fromJson(Map<String, dynamic> json) {
     return Shift(
@@ -968,6 +1091,15 @@ class Shift {
       status: json['status']?.toString() ?? 'open',
       expectedCash: _asDouble(json['expectedCash']),
       openingCash: _asDouble(json['openingCash']),
+      cashInTotal: _asDouble(json['cashInTotal']),
+      cashOutTotal: _asDouble(json['cashOutTotal']),
+      actualCash: json['actualCash'] == null
+          ? null
+          : _asDouble(json['actualCash']),
+      cashVariance: json['cashVariance'] == null
+          ? null
+          : _asDouble(json['cashVariance']),
+      closeApprovalStatus: json['closeApprovalStatus']?.toString(),
     );
   }
 
@@ -976,7 +1108,131 @@ class Shift {
     'status': status,
     'expectedCash': expectedCash,
     'openingCash': openingCash,
+    'cashInTotal': cashInTotal,
+    'cashOutTotal': cashOutTotal,
+    'actualCash': actualCash,
+    'cashVariance': cashVariance,
+    'closeApprovalStatus': closeApprovalStatus,
   };
+}
+
+class ShiftCashMovement {
+  const ShiftCashMovement({
+    required this.id,
+    required this.type,
+    required this.amount,
+    required this.reason,
+    required this.createdAt,
+    this.note,
+    this.actorName,
+  });
+
+  final String id;
+  final String type;
+  final double amount;
+  final String reason;
+  final String? note;
+  final String? actorName;
+  final DateTime createdAt;
+
+  factory ShiftCashMovement.fromJson(Map<String, dynamic> json) {
+    return ShiftCashMovement(
+      id: json['id']?.toString() ?? '',
+      type: json['type']?.toString() ?? 'cash_in',
+      amount: _asDouble(json['amount']),
+      reason: json['reason']?.toString() ?? '',
+      note: _nullableText(json['note']),
+      actorName: _nullableText(json['actorName']),
+      createdAt:
+          DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
+
+class ShiftPaymentSummary {
+  const ShiftPaymentSummary({
+    required this.method,
+    required this.amount,
+    required this.count,
+  });
+
+  final String method;
+  final double amount;
+  final int count;
+
+  factory ShiftPaymentSummary.fromJson(Map<String, dynamic> json) {
+    return ShiftPaymentSummary(
+      method: json['method']?.toString() ?? '-',
+      amount: _asDouble(json['amount']),
+      count: int.tryParse(json['count']?.toString() ?? '') ?? 0,
+    );
+  }
+}
+
+class ShiftSummary {
+  const ShiftSummary({
+    required this.shift,
+    required this.cashMovements,
+    required this.paymentSummary,
+    this.variance,
+  });
+
+  final Shift shift;
+  final List<ShiftCashMovement> cashMovements;
+  final List<ShiftPaymentSummary> paymentSummary;
+  final double? variance;
+
+  factory ShiftSummary.fromJson(Map<String, dynamic> json) {
+    return ShiftSummary(
+      shift: Shift.fromJson(Map<String, dynamic>.from(json['shift'] as Map)),
+      cashMovements: ((json['cashMovements'] as List?) ?? [])
+          .map(
+            (item) =>
+                ShiftCashMovement.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(),
+      paymentSummary: ((json['paymentSummary'] as List?) ?? [])
+          .map(
+            (item) =>
+                ShiftPaymentSummary.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(),
+      variance: json['variance'] == null ? null : _asDouble(json['variance']),
+    );
+  }
+}
+
+class PendingVarianceShift {
+  const PendingVarianceShift({
+    required this.id,
+    required this.cashierName,
+    required this.expectedCash,
+    required this.actualCash,
+    required this.cashVariance,
+    this.varianceReason,
+    this.closedAt,
+  });
+
+  final String id;
+  final String cashierName;
+  final double expectedCash;
+  final double actualCash;
+  final double cashVariance;
+  final String? varianceReason;
+  final DateTime? closedAt;
+
+  factory PendingVarianceShift.fromJson(Map<String, dynamic> json) {
+    return PendingVarianceShift(
+      id: json['id']?.toString() ?? '',
+      cashierName: json['cashierName']?.toString() ?? 'Kasir',
+      expectedCash: _asDouble(json['expectedCash']),
+      actualCash: _asDouble(json['actualCash']),
+      cashVariance: _asDouble(json['cashVariance']),
+      varianceReason: _nullableText(json['varianceReason']),
+      closedAt: _dateOrNull(json['closedAt']),
+    );
+  }
 }
 
 class CartSession {
@@ -994,8 +1250,12 @@ class CartSession {
   final String label;
   final List<CartLine> lines;
 
-  CartSession copyWith({List<CartLine>? lines}) {
-    return CartSession(id: id, label: label, lines: lines ?? this.lines);
+  CartSession copyWith({String? label, List<CartLine>? lines}) {
+    return CartSession(
+      id: id,
+      label: label ?? this.label,
+      lines: lines ?? this.lines,
+    );
   }
 }
 

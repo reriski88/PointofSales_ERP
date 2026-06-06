@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
-import { requireActor, requireRole } from "@/lib/rbac";
+import { requireActor, requireAnyPermission } from "@/lib/rbac";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,10 @@ const printReceiptSchema = z.object({
 export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet", "cashier", "auditor"]);
+    await requireAnyPermission(actor, [
+      { menu: "cashier", action: "view" },
+      { menu: "receipt", action: "view" },
+    ]);
     const body = await parseJson(request, printReceiptSchema);
     await printTextToWindowsPrinter(body.printerName, body.text, body.logoRasterBase64);
     return ok({ printed: true, printerName: body.printerName });
@@ -88,7 +91,7 @@ public class RawPrinterHelper {
     if (!OpenPrinter(printerName.Normalize(), out printerHandle, IntPtr.Zero)) return false;
     try {
       DOCINFOA docInfo = new DOCINFOA();
-      docInfo.pDocName = "POS ERP Receipt";
+      docInfo.pDocName = "Smart POS ERP Receipt";
       docInfo.pDataType = "RAW";
       int written;
       if (!StartDocPrinter(printerHandle, 1, docInfo)) return false;
@@ -111,7 +114,7 @@ public class RawPrinterHelper {
 Add-Type -TypeDefinition $rawPrinterSource
 $text = Get-Content -LiteralPath $filePath -Raw
 $normalizedText = $text -replace "(\\r\\n|\\n|\\r)", ([string][char]13 + [string][char]10)
-$textBytes = [System.Text.Encoding]::ASCII.GetBytes($normalizedText)
+$textBytes = [System.Text.Encoding]::GetEncoding(437).GetBytes($normalizedText)
 $logoBytes = if ($logoPath -and (Test-Path -LiteralPath $logoPath)) { [System.IO.File]::ReadAllBytes($logoPath) } else { [byte[]]@() }
 $bytes = [byte[]](27, 64) + $logoBytes + $textBytes + [byte[]](13, 10, 13, 10, 27, 100, 4, 12)
 $printed = [RawPrinterHelper]::SendBytesToPrinter($printerName, $bytes)

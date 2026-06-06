@@ -17,16 +17,24 @@ export async function createWasteAdjustment(
   request?: Request,
 ) {
   return wasteRepository.transaction(async (tx) => {
+    if (input.idempotencyKey) {
+      const [existing] = await wasteRepository.findByIdempotencyKey(tx, actor.organizationId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+
     const [targetOutlet] = await wasteRepository.findActiveOutlet(tx, input.outletId, actor.organizationId);
 
     if (!targetOutlet) {
       throw new ApiError("NOT_FOUND", "Outlet not found", 404);
     }
 
-    const [targetSku] = await wasteRepository.findActiveSku(tx, input.skuId, actor.organizationId);
+    const [targetSku] = await wasteRepository.findActiveSku(tx, input.skuId, actor.organizationId, input.outletId);
 
     if (!targetSku) {
       throw new ApiError("NOT_FOUND", "SKU not found", 404);
+    }
+    if (!targetSku.trackInventory) {
+      throw new ApiError("BAD_REQUEST", "Produk non-stok tidak bisa dicatat sebagai waste/remahan.", 400);
     }
 
     let factor = decimal(targetSku.saleUnitToBaseFactor);
@@ -56,6 +64,7 @@ export async function createWasteAdjustment(
         quantityInput: fixed(input.quantity, 3),
         unitId: input.unitId,
         quantityBase: fixed(quantityBase, 3),
+        idempotencyKey: input.idempotencyKey,
         estimatedLoss: fixed(estimatedLoss),
         reason: input.reason,
         note: input.note,
@@ -90,6 +99,7 @@ export async function createWasteAdjustment(
         quantityBase,
         estimatedLoss,
         reason: input.reason,
+        idempotencyKey: input.idempotencyKey,
       },
       ipAddress:
         request?.headers.get("x-forwarded-for") ??
@@ -177,17 +187,32 @@ async function postWasteMovement(
     throw new ApiError("CONFLICT", "Stok tersedia tidak cukup atau sedang berubah. Muat ulang data stok.", 409);
   }
 
-  await wasteRepository.createStockMovement(tx, {
-    organizationId: actor.organizationId,
+  const batchAllocations = await wasteRepository.decrementBatchesFefo(
+    tx,
+    actor.organizationId,
     outletId,
     skuId,
-    type: "waste",
-    quantityBase: fixed(-quantityBase, 3),
-    unitId,
-    quantityInput: fixed(quantityInput, 3),
-    referenceType: "waste_adjustment",
-    referenceId: wasteId,
-    actorUserId: actor.id,
-    note: "Waste/shrinkage posted",
-  });
+    quantityBase,
+  );
+  if (!batchAllocations) {
+    throw new ApiError("CONFLICT", "Batch stok tidak cukup atau sedang berubah. Muat ulang data stok.", 409);
+  }
+
+  for (const allocation of batchAllocations) {
+    const allocatedInputQty = quantityInput * (allocation.quantityBase / quantityBase);
+    await wasteRepository.createStockMovement(tx, {
+      organizationId: actor.organizationId,
+      outletId,
+      skuId,
+      batchId: allocation.batchId ?? undefined,
+      type: "waste",
+      quantityBase: fixed(-allocation.quantityBase, 3),
+      unitId,
+      quantityInput: fixed(allocatedInputQty, 3),
+      referenceType: "waste_adjustment",
+      referenceId: wasteId,
+      actorUserId: actor.id,
+      note: "Waste/shrinkage posted",
+    });
+  }
 }

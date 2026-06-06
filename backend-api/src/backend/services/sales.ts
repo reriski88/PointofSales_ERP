@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ApiError } from "@/lib/http";
 import { baseQty, decimal, fixed } from "@/lib/number";
 import type { Actor } from "@/lib/rbac";
-import { createSaleSchema, quoteSaleSchema, refundSaleSchema, voidSaleSchema } from "@/lib/validation";
+import { createSaleSchema, quoteSaleSchema, refundSaleSchema, resolveSyncReviewSaleSchema, voidSaleSchema } from "@/lib/validation";
 import { salesRepository } from "@/backend/repositories/sales-repository";
 import { customerRepository } from "@/backend/repositories/customer-repository";
 import { promotionRepository } from "@/backend/repositories/promotion-repository";
@@ -13,6 +13,7 @@ export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 export type QuoteSaleInput = z.infer<typeof quoteSaleSchema>;
 export type VoidSaleInput = z.infer<typeof voidSaleSchema>;
 export type RefundSaleInput = z.infer<typeof refundSaleSchema>;
+export type ResolveSyncReviewSaleInput = z.infer<typeof resolveSyncReviewSaleSchema>;
 
 type CreateSaleOptions = {
   allowStockConflict?: boolean;
@@ -93,8 +94,17 @@ export async function createSale(actor: Actor, input: CreateSaleInput, request?:
     }
 
     let activeShiftId = input.shiftId;
-    if (!activeShiftId) {
-      const [activeShift] = await salesRepository.findOpenShift(tx, input.outletId, actor.id);
+    if (activeShiftId) {
+      const [activeShift] = await salesRepository.findOpenShiftById(
+        tx,
+        activeShiftId,
+        input.outletId,
+        actor.id,
+        actor.organizationId,
+      );
+      activeShiftId = activeShift?.id;
+    } else {
+      const [activeShift] = await salesRepository.findOpenShift(tx, input.outletId, actor.id, actor.organizationId);
       activeShiftId = activeShift?.id;
     }
 
@@ -210,25 +220,40 @@ export async function createSale(actor: Actor, input: CreateSaleInput, request?:
         cogsTotal: fixed(item.cogsTotal),
       });
 
-      if (!hasStockConflict) {
+      if (!hasStockConflict && item.sku.trackInventory) {
         const decremented = await salesRepository.decrementBalance(tx, input.outletId, item.sku.id, item.quantityBase);
         if (!decremented.length) {
           throw new ApiError("CONFLICT", `Stok tersedia ${item.sku.name} tidak cukup atau sedang berubah. Muat ulang data stok.`, 409);
         }
 
-        await salesRepository.createStockMovement(tx, {
-          organizationId: actor.organizationId,
-          outletId: input.outletId,
-          skuId: item.sku.id,
-          type: "sale",
-          quantityBase: fixed(-item.quantityBase, 3),
-          unitId: item.inputUnitId,
-          quantityInput: fixed(item.quantityInput, 3),
-          referenceType: "sale",
-          referenceId: createdSale.id,
-          actorUserId: actor.id,
-          note: "POS sale",
-        });
+        const batchAllocations = await salesRepository.decrementBatchesFefo(
+          tx,
+          actor.organizationId,
+          input.outletId,
+          item.sku.id,
+          item.quantityBase,
+        );
+        if (!batchAllocations) {
+          throw new ApiError("CONFLICT", `Batch stok ${item.sku.name} tidak cukup atau sedang berubah. Muat ulang data stok.`, 409);
+        }
+
+        for (const allocation of batchAllocations) {
+          const allocatedInputQty = item.quantityInput * (allocation.quantityBase / item.quantityBase);
+          await salesRepository.createStockMovement(tx, {
+            organizationId: actor.organizationId,
+            outletId: input.outletId,
+            skuId: item.sku.id,
+            batchId: allocation.batchId ?? undefined,
+            type: "sale",
+            quantityBase: fixed(-allocation.quantityBase, 3),
+            unitId: item.inputUnitId,
+            quantityInput: fixed(allocatedInputQty, 3),
+            referenceType: "sale",
+            referenceId: createdSale.id,
+            actorUserId: actor.id,
+            note: "POS sale",
+          });
+        }
       }
     }
 
@@ -327,7 +352,7 @@ async function prepareSaleItems(
   let hasStockConflict = false;
 
   for (const item of items) {
-    const [targetSku] = await salesRepository.findActiveSkuWithProduct(tx, item.skuId, actor.organizationId);
+    const [targetSku] = await salesRepository.findActiveSkuWithProduct(tx, item.skuId, actor.organizationId, outletId);
 
     if (!targetSku) {
       throw new ApiError("NOT_FOUND", `SKU ${item.skuId} not found`, 404);
@@ -358,7 +383,7 @@ async function prepareSaleItems(
     const lineTotal = grossLineTotal - discountTotal;
     const itemCogsTotal = quantityBase * decimal(targetSku.cost);
 
-    if (checkStock) {
+    if (checkStock && targetSku.trackInventory) {
       const [balance] = await salesRepository.findBalance(tx, outletId, targetSku.id);
       const availableQty =
         decimal(balance?.onHandBaseQty ?? "0") -
@@ -634,6 +659,43 @@ function roundToCashHundred(value: number) {
   return Math.ceil(amount / 100) * 100;
 }
 
+function normalizeSaleSettlement(input: CreateSaleInput, grandTotal: number) {
+  const nonCashPayments = input.payments.filter((item) => item.method !== "cash");
+  const nonCashTotal = nonCashPayments.reduce((sum, current) => sum + current.amount, 0);
+  const cashInputTotal = input.payments
+    .filter((item) => item.method === "cash")
+    .reduce((sum, current) => sum + current.amount, 0);
+  if (nonCashTotal > grandTotal + 0.000001) {
+    throw new ApiError("BAD_REQUEST", "Pembayaran non-tunai tidak boleh melebihi total transaksi", 400);
+  }
+  const cashDue = Math.max(0, grandTotal - nonCashTotal);
+  const cashAppliedTotal = Math.min(cashInputTotal, cashDue);
+  const normalizedPayments = [
+    ...nonCashPayments,
+    ...(cashAppliedTotal > 0 ? [{ method: "cash" as const, amount: cashAppliedTotal }] : []),
+  ];
+  const paidTotal = normalizedPayments.reduce((sum, current) => sum + current.amount, 0);
+  const receivableTotal = grandTotal - paidTotal;
+  const cashTenderedTotal = cashInputTotal > 0 ? input.cashTenderedTotal ?? cashInputTotal : 0;
+  const changeTotal = Math.max(0, cashTenderedTotal - cashAppliedTotal);
+
+  if (cashTenderedTotal + 0.000001 < cashAppliedTotal) {
+    throw new ApiError("BAD_REQUEST", "Uang tunai diterima tidak boleh lebih kecil dari pembayaran tunai transaksi", 400);
+  }
+  if (paidTotal < grandTotal && (!input.allowReceivable || !input.customerId)) {
+    throw new ApiError("BAD_REQUEST", "Payment total is lower than grand total", 400);
+  }
+
+  return {
+    normalizedPayments,
+    paidTotal,
+    receivableTotal,
+    cashTenderedTotal,
+    changeTotal,
+    cashAppliedTotal,
+  };
+}
+
 export async function voidSale(actor: Actor, saleId: string, input: VoidSaleInput, request?: Request) {
   return reverseCompletedSale({
     actor,
@@ -663,6 +725,192 @@ export async function refundSale(actor: Actor, saleId: string, input: RefundSale
   });
 }
 
+export async function resolveSyncReviewSale(
+  actor: Actor,
+  saleId: string,
+  input: ResolveSyncReviewSaleInput,
+  request?: Request,
+) {
+  return salesRepository.transaction(async (tx) => {
+    const [targetSale] = await salesRepository.findSaleByIdTx(tx, saleId, actor.organizationId);
+
+    if (!targetSale) {
+      throw new ApiError("NOT_FOUND", "Transaksi tidak ditemukan", 404);
+    }
+    if (targetSale.status !== "sync_review") {
+      throw new ApiError("CONFLICT", "Hanya transaksi Perlu review yang bisa diproses", 409);
+    }
+
+    if (input.action === "reject") {
+      const [updatedSale] = await salesRepository.updateSale(tx, targetSale.id, {
+        status: "voided",
+        updatedAt: new Date(),
+      });
+      await salesRepository.updateSyncQueueByIdempotencyKeyTx(tx, actor.organizationId, targetSale.idempotencyKey, {
+        status: "failed",
+        error: input.reason ?? "Transaksi sync review ditolak",
+        processedAt: new Date(),
+      });
+      await salesRepository.createAuditLog(tx, {
+        organizationId: actor.organizationId,
+        outletId: targetSale.outletId,
+        actorUserId: actor.id,
+        action: "sale.sync_review.reject",
+        entityType: "sale",
+        entityId: targetSale.id,
+        before: { status: targetSale.status },
+        after: { status: updatedSale.status, reason: input.reason },
+        note: input.reason,
+        ipAddress: request?.headers.get("x-forwarded-for") ?? request?.headers.get("cf-connecting-ip"),
+        userAgent: request?.headers.get("user-agent"),
+      });
+      return { sale: updatedSale, action: "reject" as const };
+    }
+
+    const items = await salesRepository.findSaleItemsWithSkuModeTx(tx, targetSale.id);
+    if (!items.length) {
+      throw new ApiError("CONFLICT", "Item transaksi review tidak ditemukan", 409);
+    }
+
+    const [queue] = await salesRepository.findSyncQueueByIdempotencyKeyTx(tx, actor.organizationId, targetSale.idempotencyKey);
+    const payloadParse = createSaleSchema.safeParse(queue?.payload);
+    if (!payloadParse.success) {
+      throw new ApiError("CONFLICT", "Payload sync asli tidak lengkap. Reject transaksi dan input ulang jika perlu.", 409);
+    }
+    const payload = payloadParse.data;
+    const settlement = normalizeSaleSettlement(payload, decimal(targetSale.grandTotal));
+
+    if (settlement.cashAppliedTotal > 0) {
+      if (!targetSale.shiftId) {
+        throw new ApiError("CONFLICT", "Posting transaksi tunai membutuhkan shift asal", 409);
+      }
+      const [targetShift] = await salesRepository.findShift(tx, targetSale.shiftId);
+      if (!targetShift || targetShift.status !== "open") {
+        throw new ApiError("CONFLICT", "Shift asal sudah tutup. Reject transaksi review atau buat koreksi manual.", 409);
+      }
+    }
+
+    for (const item of items) {
+      if (!item.trackInventory) continue;
+      const quantityBase = decimal(item.quantityBase);
+      const decremented = await salesRepository.decrementBalance(tx, targetSale.outletId, item.skuId, quantityBase);
+      if (!decremented.length) {
+        throw new ApiError("CONFLICT", `Stok tersedia ${item.nameSnapshot} belum cukup. Tambah/reconcile stok lalu coba Post lagi.`, 409);
+      }
+      const batchAllocations = await salesRepository.decrementBatchesFefo(
+        tx,
+        actor.organizationId,
+        targetSale.outletId,
+        item.skuId,
+        quantityBase,
+      );
+      if (!batchAllocations) {
+        throw new ApiError("CONFLICT", `Batch stok ${item.nameSnapshot} belum cukup. Reconcile batch gap lalu coba Post lagi.`, 409);
+      }
+      for (const allocation of batchAllocations) {
+        const allocatedInputQty = decimal(item.quantityInput) * (allocation.quantityBase / quantityBase);
+        await salesRepository.createStockMovement(tx, {
+          organizationId: actor.organizationId,
+          outletId: targetSale.outletId,
+          skuId: item.skuId,
+          batchId: allocation.batchId ?? undefined,
+          type: "sale",
+          quantityBase: fixed(-allocation.quantityBase, 3),
+          unitId: item.unitId,
+          quantityInput: fixed(allocatedInputQty, 3),
+          referenceType: "sale",
+          referenceId: targetSale.id,
+          actorUserId: actor.id,
+          note: "POS sync review posted",
+        });
+      }
+    }
+
+    for (const payment of settlement.normalizedPayments) {
+      await salesRepository.createPayment(tx, {
+        saleId: targetSale.id,
+        method: payment.method,
+        amount: fixed(payment.amount),
+        reference: payment.reference,
+      });
+    }
+
+    if (targetSale.shiftId && settlement.cashAppliedTotal > 0) {
+      await salesRepository.incrementShiftCash(tx, targetSale.shiftId, settlement.cashAppliedTotal);
+    }
+
+    if (targetSale.customerId) {
+      const loyaltyPoints = Math.max(0, Math.floor(decimal(targetSale.grandTotal) / 10000));
+      await customerRepository.incrementCustomerStats(tx, targetSale.customerId, decimal(targetSale.grandTotal), loyaltyPoints);
+    }
+
+    if (settlement.receivableTotal > 0 && targetSale.customerId) {
+      await customerRepository.createReceivable(tx, {
+        organizationId: actor.organizationId,
+        outletId: targetSale.outletId,
+        customerId: targetSale.customerId,
+        saleId: targetSale.id,
+        status: "open",
+        amount: fixed(settlement.receivableTotal),
+        paidTotal: "0.00",
+        dueDate: payload.receivableDueDate ? new Date(payload.receivableDueDate) : undefined,
+        note: payload.receivableNote,
+      });
+    }
+
+    const promotions = await salesRepository.findSalePromotionsTx(tx, targetSale.id);
+    for (const promo of promotions) {
+      if (promo.promotionId) {
+        await promotionRepository.incrementRedemption(tx, promo.promotionId);
+      }
+    }
+
+    await financeRepository.postSale(tx, {
+      organizationId: actor.organizationId,
+      outletId: targetSale.outletId,
+      saleId: targetSale.id,
+      receiptNumber: targetSale.receiptNumber,
+      actorUserId: actor.id,
+      subtotal: decimal(targetSale.subtotal),
+      discountTotal: decimal(targetSale.discountTotal),
+      taxTotal: decimal(targetSale.taxTotal),
+      serviceChargeTotal: decimal(targetSale.serviceChargeTotal),
+      donationTotal: decimal(targetSale.donationTotal),
+      roundingTotal: decimal(targetSale.roundingTotal),
+      cogsTotal: decimal(targetSale.cogsTotal),
+      receivableTotal: settlement.receivableTotal,
+      payments: settlement.normalizedPayments,
+      taxIncluded: false,
+    });
+
+    const [updatedSale] = await salesRepository.updateSale(tx, targetSale.id, {
+      status: "completed",
+      cashTenderedTotal: fixed(settlement.cashTenderedTotal),
+      changeTotal: fixed(settlement.changeTotal),
+      updatedAt: new Date(),
+    });
+    await salesRepository.updateSyncQueueByIdempotencyKeyTx(tx, actor.organizationId, targetSale.idempotencyKey, {
+      status: "processed",
+      error: null,
+      processedSaleId: targetSale.id,
+      processedAt: new Date(),
+    });
+    await salesRepository.createAuditLog(tx, {
+      organizationId: actor.organizationId,
+      outletId: targetSale.outletId,
+      actorUserId: actor.id,
+      action: "sale.sync_review.post",
+      entityType: "sale",
+      entityId: targetSale.id,
+      before: { status: targetSale.status },
+      after: { status: updatedSale.status, receivableTotal: settlement.receivableTotal },
+      ipAddress: request?.headers.get("x-forwarded-for") ?? request?.headers.get("cf-connecting-ip"),
+      userAgent: request?.headers.get("user-agent"),
+    });
+    return { sale: updatedSale, action: "post" as const };
+  });
+}
+
 async function reverseCompletedSale(input: {
   actor: Actor;
   saleId: string;
@@ -686,7 +934,7 @@ async function reverseCompletedSale(input: {
       throw new ApiError("CONFLICT", "Hanya transaksi selesai yang bisa dibatalkan atau dikembalikan dananya", 409);
     }
 
-    const items = await salesRepository.findSaleItemsTx(tx, targetSale.id);
+    const items = await salesRepository.findSaleItemsWithSkuModeTx(tx, targetSale.id);
     const policyItems = await salesRepository.findSaleItemsWithProductPolicyTx(tx, targetSale.id);
     enforceCorrectionWindow(targetSale.createdAt, policyItems, input.policyField);
     const payments = await salesRepository.findSalePaymentsTx(tx, targetSale.id);
@@ -719,6 +967,7 @@ async function reverseCompletedSale(input: {
 
     if (input.restock) {
       for (const item of items) {
+        if (!item.trackInventory) continue;
         const quantityBase = decimal(item.quantityBase);
         await salesRepository.incrementBalance(tx, targetSale.outletId, item.skuId, quantityBase);
         await salesRepository.createStockMovement(tx, {

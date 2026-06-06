@@ -1,6 +1,6 @@
 import { financeRepository } from "@/backend/repositories/finance-repository";
 import { created, handleRouteError, ok, parseJson } from "@/lib/http";
-import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
 import { createOperationalExpenseSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet", "auditor"]);
+    await requirePermission(actor, "financialReports", "view");
     const rows = await financeRepository.listOperationalExpenses(actor.organizationId);
     return ok(rows);
   } catch (error) {
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet"]);
+    await requirePermission(actor, "financialReports", "create");
     const body = await parseJson(request, createOperationalExpenseSchema);
     if (body.outletId) {
       await requireOutletAccess(actor, body.outletId);

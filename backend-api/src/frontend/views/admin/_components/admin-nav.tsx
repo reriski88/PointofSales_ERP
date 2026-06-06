@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -21,14 +22,17 @@ import {
   ClipboardList,
   UserCircle,
   ReceiptText,
+  Ruler,
   ShieldCheck,
   Truck,
   Users,
   X,
 } from "lucide-react";
+import { AdminTour } from "./admin-tour";
 import { useLanguage } from "@/frontend/controllers/language-provider";
 import {
   allOutletsValue,
+  clearSelectedOutlet,
   useSelectedOutlet,
 } from "@/frontend/controllers/selected-outlet-provider";
 import {
@@ -37,6 +41,7 @@ import {
   getOutlets,
   getProfile,
 } from "@/frontend/controllers/admin-data-cache";
+import { confirmAction } from "./toast-provider";
 // import { AiChatWidget } from "./ai-chat-widget";
 import { SearchableSelect } from "./searchable-select";
 
@@ -101,6 +106,12 @@ const navGroups: NavGroup[] = [
         href: "/admin/products",
         labelKey: "products",
         icon: Boxes,
+        menuKey: "products",
+      },
+      {
+        href: "/admin/units",
+        labelKey: "units",
+        icon: Ruler,
         menuKey: "products",
       },
       {
@@ -218,28 +229,7 @@ function cacheMenuKeys(keys: Set<MenuKey>) {
 }
 
 function initialVisibleMenuKeys() {
-  if (typeof window === "undefined") {
-    return new Set<MenuKey>(allMenuKeys);
-  }
-
-  const cached = window.sessionStorage.getItem(accessCacheKey);
-  if (!cached) {
-    return new Set<MenuKey>(allMenuKeys);
-  }
-
-  try {
-    const parsed = JSON.parse(cached);
-    if (!Array.isArray(parsed)) {
-      return new Set<MenuKey>(allMenuKeys);
-    }
-    return new Set(
-      parsed.filter((key): key is MenuKey =>
-        allMenuKeys.includes(key as MenuKey),
-      ),
-    );
-  } catch {
-    return new Set<MenuKey>(allMenuKeys);
-  }
+  return new Set<MenuKey>(allMenuKeys);
 }
 
 export function AdminNav() {
@@ -250,18 +240,34 @@ export function AdminNav() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [canSelectAllOutlets, setCanSelectAllOutlets] = useState(false);
+  const [profileName, setProfileName] = useState<string>("");
+  const [profileImage, setProfileImage] = useState<string | null>(null);
   const [profileRole, setProfileRole] = useState<string | null>(null);
   const [visibleMenuKeys, setVisibleMenuKeys] = useState<Set<MenuKey>>(
     initialVisibleMenuKeys,
   );
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (options?: { skipConfirm?: boolean }) => {
+    if (
+      !options?.skipConfirm &&
+      !(await confirmAction("Yakin ingin keluar dari dashboard?"))
+    ) {
+      return;
+    }
     setIsLoggingOut(true);
     try {
       window.sessionStorage.removeItem(accessCacheKey);
       window.sessionStorage.removeItem(permissionsCacheKey);
       clearAdminDataCache();
-      await fetch("/api/auth/sign-out", { method: "POST" });
+      clearSelectedOutlet();
+      await fetch("/api/auth/sign-out", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
     } finally {
       window.location.href = "/admin/login";
     }
@@ -274,7 +280,7 @@ export function AdminNav() {
       if (timer !== undefined) {
         window.clearTimeout(timer);
       }
-      timer = window.setTimeout(() => void logout(), idleMs);
+      timer = window.setTimeout(() => void logout({ skipConfirm: true }), idleMs);
     };
     const events = [
       "mousemove",
@@ -308,24 +314,52 @@ export function AdminNav() {
         const [access, profile, nextOutlets] = await Promise.all([
           getCurrentAccess(),
           getProfile(),
-          getOutlets(),
+          getOutlets({ force: true }),
         ]);
         if (!cancelled) {
           const nextKeys = visibleMenuKeysFrom(access.permissions);
           setVisibleMenuKeys(nextKeys);
           cacheMenuKeys(nextKeys);
+          setProfileName(profile.name ?? "Admin");
+          setProfileImage(profile.image ?? null);
           setProfileRole(profile.role);
-          const nextCanSelectAll = ["owner", "auditor"].includes(profile.role);
+          const nextCanSelectAll =
+            ["owner", "auditor"].includes(profile.role) &&
+            nextOutlets.length > 0;
           setOutlets(nextOutlets);
           setCanSelectAllOutlets(nextCanSelectAll);
+          const requiresFirstRunSetup =
+            profile.role === "owner" && nextOutlets.length === 0;
+          const requiresOutletAssignment =
+            profile.role !== "owner" && nextOutlets.length === 0;
+          if (requiresFirstRunSetup) {
+            clearSelectedOutlet();
+            if (pathname !== "/admin/outlets") {
+              window.location.replace("/admin/outlets?setup=first-run");
+            }
+            return;
+          }
+          if (requiresOutletAssignment) {
+            clearSelectedOutlet();
+            if (pathname !== "/admin/profile") {
+              window.location.replace("/admin/profile?notice=no-outlet");
+            }
+            return;
+          }
           const hasSelectedOutlet =
             selectedOutletId === allOutletsValue
-              ? nextCanSelectAll
+              ? nextCanSelectAll && nextOutlets.length > 0
               : nextOutlets.some((outlet) => outlet.id === selectedOutletId);
           if (!hasSelectedOutlet) {
-            setSelectedOutletId(
-              nextCanSelectAll ? allOutletsValue : (nextOutlets[0]?.id ?? ""),
-            );
+            const fallbackOutletId =
+              nextCanSelectAll && nextOutlets.length > 0
+                ? allOutletsValue
+                : (nextOutlets[0]?.id ?? "");
+            if (fallbackOutletId) {
+              setSelectedOutletId(fallbackOutletId);
+            } else {
+              clearSelectedOutlet();
+            }
           }
         }
       } catch {
@@ -339,7 +373,22 @@ export function AdminNav() {
     return () => {
       cancelled = true;
     };
-  }, [selectedOutletId, setSelectedOutletId]);
+  }, [pathname, selectedOutletId, setSelectedOutletId]);
+
+  useEffect(() => {
+    async function reloadProfile() {
+      try {
+        const profile = await getProfile({ force: true });
+        setProfileName(profile.name ?? "Admin");
+        setProfileImage(profile.image ?? null);
+        setProfileRole(profile.role);
+      } catch {
+        // Keep previous sidebar identity.
+      }
+    }
+    window.addEventListener("pos-profile-updated", reloadProfile);
+    return () => window.removeEventListener("pos-profile-updated", reloadProfile);
+  }, []);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -375,7 +424,7 @@ export function AdminNav() {
               <Menu className="h-5 w-5" />
             </button>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-primary">POS ERP</p>
+              <p className="text-sm font-semibold text-primary">Smart POS ERP</p>
               <h1 className="truncate text-lg font-semibold">
                 {t("backendDashboard")}
               </h1>
@@ -415,6 +464,9 @@ export function AdminNav() {
           onLogout={logout}
           isLoggingOut={isLoggingOut}
           visibleMenuKeys={visibleMenuKeys}
+          profileName={profileName}
+          profileImage={profileImage}
+          profileRole={profileRole}
           outlets={outlets}
           selectedOutletId={selectedOutletId}
           canSelectAllOutlets={canSelectAllOutlets}
@@ -424,18 +476,22 @@ export function AdminNav() {
         />
       </aside>
 
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r bg-[#1D3557] text-white shadow-xl lg:flex">
+      <aside data-tour="sidebar" className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r bg-[#1D3557] text-white shadow-xl lg:flex">
         <AdminSidebarContent
           pathname={pathname}
           onLogout={logout}
           isLoggingOut={isLoggingOut}
           visibleMenuKeys={visibleMenuKeys}
+          profileName={profileName}
+          profileImage={profileImage}
+          profileRole={profileRole}
           outlets={outlets}
           selectedOutletId={selectedOutletId}
           canSelectAllOutlets={canSelectAllOutlets}
           onSelectedOutletChange={setSelectedOutletId}
         />
       </aside>
+      <AdminTour pathname={pathname} />
       {/* <AiChatWidget
         enabled={["owner", "admin_outlet"].includes(profileRole ?? "")}
       /> */}
@@ -448,6 +504,9 @@ function AdminSidebarContent(props: {
   onLogout: () => Promise<void>;
   isLoggingOut: boolean;
   visibleMenuKeys: Set<MenuKey>;
+  profileName: string;
+  profileImage: string | null;
+  profileRole: string | null;
   outlets: Outlet[];
   selectedOutletId: string;
   canSelectAllOutlets: boolean;
@@ -494,13 +553,24 @@ function AdminSidebarContent(props: {
     <>
       <div className="shrink-0 border-b border-white/10 p-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#E63946]">
-            <ReceiptText className="h-6 w-6" />
-          </div>
+          {props.profileImage ? (
+            <Image
+              src={props.profileImage}
+              alt={`Foto ${props.profileName || "user"}`}
+              width={44}
+              height={44}
+              unoptimized
+              className="h-11 w-11 shrink-0 rounded-lg border border-white/15 bg-white/10 object-cover"
+            />
+          ) : (
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#E63946]">
+              <ReceiptText className="h-6 w-6" />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-[#A8DADC]">POS ERP</p>
+            <p className="text-sm font-medium text-[#A8DADC]">Smart POS ERP</p>
             <h1 className="truncate text-xl font-semibold">
-              {t("adminConsole")}
+              {props.profileName || t("adminConsole")}
             </h1>
           </div>
           {props.showCloseButton ? (
@@ -514,7 +584,7 @@ function AdminSidebarContent(props: {
             </button>
           ) : null}
         </div>
-        <div className="mt-4 space-y-2">
+        <div data-tour="outlet-select" className="mt-4 space-y-2">
           <label className="text-xs font-semibold uppercase text-[#A8DADC]">
             {t("activeOutlet")}
           </label>
@@ -575,7 +645,7 @@ function AdminSidebarContent(props: {
       <div className="m-3 shrink-0 rounded-lg border border-white/10 bg-white/10 p-3">
         <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[#A8DADC]">
           <ShieldCheck className="h-4 w-4" />
-          Sesi
+          {props.profileRole ?? "Sesi"}
         </div>
         <button
           type="button"
@@ -652,14 +722,23 @@ function NavGroupSection(props: {
 }
 
 export function CashierBoundaryNotice() {
+  const pathname = usePathname();
   const { t } = useLanguage();
+  const activeItem = navItems.find((item) => pathname === item.href) ?? navItems.find((item) => pathname.startsWith(`${item.href}/`));
+  const title = activeItem ? t(activeItem.labelKey) : t("backendDashboard");
+  const activeGroup = navGroups.find((group) =>
+    group.items.some((item) => item.href === activeItem?.href),
+  );
+  const parentLabel = activeGroup ? t(activeGroup.labelKey) : t("dashboard");
 
   return (
-    <div className="rounded-lg border border-[#A8DADC] bg-white p-4 text-sm leading-6 text-[#1D3557] shadow-sm">
-      <div className="flex items-start gap-3">
-        <ReceiptText className="mt-0.5 h-5 w-5 shrink-0 text-[#E63946]" />
-        <p>{t("boundaryNotice")}</p>
-      </div>
+    <div className="space-y-2">
+      <h1 className="text-2xl font-semibold tracking-normal text-foreground">{title}</h1>
+      <nav className="flex items-center gap-2 text-xs text-muted-foreground" aria-label="Breadcrumb">
+        <span>{parentLabel}</span>
+        <span>/</span>
+        <span className="font-medium text-foreground">{title}</span>
+      </nav>
     </div>
   );
 }

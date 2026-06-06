@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     const visibleOutletIds =
       actor.role === "owner" ? null : new Set(await accessibleOutletIds(actor));
     const rows = await userRepository.findManyWithOutlets(actor.organizationId);
-    const manageableRows = rows.filter((row) => canManageRole(actor.role, row.role));
+    const manageableRows = rows.filter((row) => row.id === actor.id || canManageRole(actor.role, row.role));
     if (!visibleOutletIds) {
       return ok(manageableRows);
     }
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
         ...row,
         outlets: row.outlets.filter((item) => visibleOutletIds.has(item.outletId)),
       }))
-      .filter((row) => row.role !== "owner" && row.outlets.length > 0);
+      .filter((row) => row.id === actor.id || (row.role !== "owner" && row.outlets.length > 0));
     return ok(visibleRows);
   } catch (error) {
     return handleRouteError(error);

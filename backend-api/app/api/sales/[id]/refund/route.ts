@@ -1,7 +1,7 @@
 import { salesRepository } from "@/backend/repositories/sales-repository";
 import { refundSale } from "@/services/sales";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
-import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
 import { publishRealtimeEvent } from "@/lib/realtime";
 import { refundSaleSchema } from "@/lib/validation";
 
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet"]);
+    await requirePermission(actor, "cashier", "edit");
     const body = await parseJson(request, refundSaleSchema);
     const { id } = await params;
     const [row] = await salesRepository.findSaleById(id, actor.organizationId);

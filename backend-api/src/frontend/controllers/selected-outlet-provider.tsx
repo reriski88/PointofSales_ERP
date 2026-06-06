@@ -14,9 +14,7 @@ type SelectedOutletContextValue = {
 const SelectedOutletContext = createContext<SelectedOutletContextValue | null>(null);
 
 export function SelectedOutletProvider({ children }: { children: ReactNode }) {
-  const [selectedOutletId, setSelectedOutletIdState] = useState(() =>
-    typeof window === "undefined" ? "" : (window.sessionStorage.getItem(selectedOutletStorageKey) ?? ""),
-  );
+  const [selectedOutletId, setSelectedOutletIdState] = useState("");
   const setSelectedOutletId = useCallback((outletId: string) => {
     window.sessionStorage.setItem(selectedOutletStorageKey, outletId);
     setSelectedOutletIdState(outletId);
@@ -27,6 +25,7 @@ export function SelectedOutletProvider({ children }: { children: ReactNode }) {
     const onOutletChange = () => {
       setSelectedOutletIdState(window.sessionStorage.getItem(selectedOutletStorageKey) ?? "");
     };
+    onOutletChange();
     window.addEventListener(selectedOutletEvent, onOutletChange);
     return () => window.removeEventListener(selectedOutletEvent, onOutletChange);
   }, []);
@@ -52,5 +51,10 @@ export function useSelectedOutlet() {
 
 export function saveSelectedOutlet(outletId: string) {
   window.sessionStorage.setItem(selectedOutletStorageKey, outletId);
+  window.dispatchEvent(new Event(selectedOutletEvent));
+}
+
+export function clearSelectedOutlet() {
+  window.sessionStorage.removeItem(selectedOutletStorageKey);
   window.dispatchEvent(new Event(selectedOutletEvent));
 }

@@ -53,42 +53,275 @@ class _QuantityEditDialogState extends State<_QuantityEditDialog> {
       Navigator.pop(context, _parseNumber(_controller.text));
     }
 
-    return AlertDialog(
-      title: Text(widget.productName),
-      content: Form(
-        key: _formKey,
-        child: TextFormField(
-          controller: _controller,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: const [
-            IndonesianNumberInputFormatter(decimal: true),
-          ],
-          textInputAction: TextInputAction.done,
-          onFieldSubmitted: (_) => submit(),
-          validator: (value) {
-            final quantity = _parseNumber(value ?? '');
-            if (quantity <= 0) {
-              return 'Qty harus lebih dari 0.';
-            }
-            return null;
-          },
-          decoration: InputDecoration(
-            labelText: 'Qty ${widget.unitLabel}',
-            hintText: '1',
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _DialogTitle(
+                  title: widget.productName,
+                  subtitle: 'Ubah jumlah item keranjang',
+                  icon: Icons.edit_outlined,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _controller,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  inputFormatters: const [
+                    IndonesianNumberInputFormatter(decimal: true),
+                  ],
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => submit(),
+                  validator: (value) {
+                    final quantity = _parseNumber(value ?? '');
+                    if (quantity <= 0) {
+                      return 'Qty harus lebih dari 0.';
+                    }
+                    return null;
+                  },
+                  decoration: InputDecoration(
+                    labelText: widget.unitLabel.isEmpty
+                        ? 'Qty'
+                        : 'Qty ${widget.unitLabel}',
+                    hintText: '1',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          FocusScope.of(context).unfocus();
+                          Navigator.pop(context);
+                        },
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: submit,
+                        child: const Text('Simpan'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            FocusScope.of(context).unfocus();
-            Navigator.pop(context);
-          },
-          child: const Text('Batal'),
+    );
+  }
+}
+
+class _DialogTitle extends StatelessWidget {
+  const _DialogTitle({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    this.danger = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? AppPalette.red : AppPalette.blue;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: color),
         ),
-        FilledButton(onPressed: submit, child: const Text('Simpan')),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: AppPalette.navy,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppPalette.slate,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+}
+
+class _PosConfirmDialog extends StatelessWidget {
+  const _PosConfirmDialog({
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    required this.icon,
+    this.details = const [],
+    this.danger = false,
+  });
+
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final IconData icon;
+  final List<_PosConfirmDetail> details;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? AppPalette.red : AppPalette.blue;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _DialogTitle(
+                title: title,
+                subtitle: message,
+                icon: icon,
+                danger: danger,
+              ),
+              if (details.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppPalette.mist,
+                    border: Border.all(color: AppPalette.line),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      for (var index = 0; index < details.length; index += 1)
+                        _PosConfirmDetailRow(
+                          detail: details[index],
+                          showBorder: index > 0,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Batal'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: color,
+                        foregroundColor: AppPalette.white,
+                      ),
+                      onPressed: () => Navigator.pop(context, true),
+                      icon: Icon(danger ? Icons.warning_amber : Icons.check),
+                      label: Text(confirmLabel),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PosConfirmDetail {
+  const _PosConfirmDetail(this.label, this.value, {this.negative = false});
+
+  final String label;
+  final String value;
+  final bool negative;
+}
+
+class _PosConfirmDetailRow extends StatelessWidget {
+  const _PosConfirmDetailRow({required this.detail, required this.showBorder});
+
+  final _PosConfirmDetail detail;
+  final bool showBorder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        border: showBorder
+            ? const Border(top: BorderSide(color: AppPalette.line))
+            : null,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              detail.label,
+              style: const TextStyle(
+                color: AppPalette.slate,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              detail.value,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: detail.negative ? AppPalette.red : AppPalette.navy,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -98,13 +331,11 @@ class _HeaderTitle extends StatelessWidget {
     required this.title,
     required this.outletName,
     required this.shiftOpen,
-    required this.expectedCash,
   });
 
   final String title;
   final String outletName;
   final bool shiftOpen;
-  final double? expectedCash;
 
   @override
   Widget build(BuildContext context) {
@@ -121,7 +352,7 @@ class _HeaderTitle extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           shiftOpen
-              ? '$outletName - Shift aktif - ${_money(expectedCash ?? 0)}'
+              ? '$outletName - Shift aktif'
               : '$outletName - Shift belum dibuka',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -132,6 +363,55 @@ class _HeaderTitle extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _CashInfoBanner extends StatelessWidget {
+  const _CashInfoBanner({required this.expectedCash});
+
+  final double expectedCash;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppPalette.success.withValues(alpha: 0.11),
+        border: Border(
+          bottom: BorderSide(color: AppPalette.success.withValues(alpha: 0.18)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: AppPalette.success.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.payments_outlined,
+              size: 18,
+              color: AppPalette.success,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Kas shift aktif ${_money(expectedCash)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppPalette.navy,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -373,9 +653,21 @@ class _WorkspaceBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shift = activeShift;
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        color: AppPalette.white,
+        border: Border.all(color: AppPalette.line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.navy.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final compact = constraints.maxWidth < 620;
@@ -438,11 +730,28 @@ class _WorkspaceBar extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Expanded(child: outletField),
+                      const Icon(
+                        Icons.storefront_outlined,
+                        color: AppPalette.blue,
+                        size: 19,
+                      ),
                       const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          selectedOutlet?.name ?? 'Pilih outlet',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppPalette.navy,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
                       status,
                     ],
                   ),
+                  const SizedBox(height: 10),
+                  Row(children: [Expanded(child: outletField)]),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -517,6 +826,397 @@ class _ShiftStatusBadge extends StatelessWidget {
   }
 }
 
+class _ShiftSheetContent extends StatelessWidget {
+  const _ShiftSheetContent({
+    required this.outlets,
+    required this.selectedOutlet,
+    required this.shift,
+    required this.summary,
+    required this.pendingVarianceShifts,
+    required this.openingCashController,
+    required this.actualCashController,
+    required this.cashMovementType,
+    required this.amountController,
+    required this.reasonController,
+    required this.noteController,
+    required this.isBusy,
+    required this.onSelectOutlet,
+    required this.onOpenShift,
+    required this.onCloseShift,
+    required this.onTypeChanged,
+    required this.onSaveCashMovement,
+    required this.onRefreshSummary,
+    required this.onApproveVariance,
+  });
+
+  final List<Outlet> outlets;
+  final Outlet? selectedOutlet;
+  final Shift? shift;
+  final ShiftSummary? summary;
+  final List<PendingVarianceShift> pendingVarianceShifts;
+  final TextEditingController openingCashController;
+  final TextEditingController actualCashController;
+  final String cashMovementType;
+  final TextEditingController amountController;
+  final TextEditingController reasonController;
+  final TextEditingController noteController;
+  final bool isBusy;
+  final ValueChanged<String> onSelectOutlet;
+  final VoidCallback? onOpenShift;
+  final VoidCallback? onCloseShift;
+  final ValueChanged<String> onTypeChanged;
+  final VoidCallback onSaveCashMovement;
+  final VoidCallback onRefreshSummary;
+  final ValueChanged<PendingVarianceShift> onApproveVariance;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeShift = summary?.shift ?? shift;
+    final movements = summary?.cashMovements ?? const <ShiftCashMovement>[];
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: _DialogTitle(
+                title: 'Outlet & Shift',
+                subtitle: 'Kelola outlet aktif, shift kasir, dan mutasi kas.',
+                icon: Icons.account_balance_wallet_outlined,
+              ),
+            ),
+            IconButton.filledTonal(
+              tooltip: 'Refresh ringkasan shift',
+              onPressed: activeShift == null || isBusy
+                  ? null
+                  : onRefreshSummary,
+              icon: const Icon(Icons.refresh),
+            ),
+            IconButton(
+              tooltip: 'Tutup',
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(
+          isExpanded: true,
+          initialValue: selectedOutlet?.id,
+          decoration: const InputDecoration(
+            labelText: 'Outlet aktif',
+            prefixIcon: Icon(Icons.storefront_outlined),
+          ),
+          items: outlets
+              .map(
+                (outlet) => DropdownMenuItem(
+                  value: outlet.id,
+                  child: Text(outlet.name, overflow: TextOverflow.ellipsis),
+                ),
+              )
+              .toList(),
+          onChanged: isBusy
+              ? null
+              : (value) {
+                  if (value != null) onSelectOutlet(value);
+                },
+        ),
+        const SizedBox(height: 12),
+        _ResponsivePair(
+          first: _ShiftMetricTile(
+            label: 'Modal awal',
+            value: _money(activeShift?.openingCash ?? 0),
+            icon: Icons.lock_open_outlined,
+          ),
+          second: _ShiftMetricTile(
+            label: 'Kas sistem',
+            value: _money(activeShift?.expectedCash ?? 0),
+            icon: Icons.payments_outlined,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _ResponsivePair(
+          first: _ShiftMetricTile(
+            label: 'Kas masuk',
+            value: _money(activeShift?.cashInTotal ?? 0),
+            icon: Icons.south_west,
+          ),
+          second: _ShiftMetricTile(
+            label: 'Kas keluar',
+            value: _money(activeShift?.cashOutTotal ?? 0),
+            icon: Icons.north_east,
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (activeShift == null) ...[
+          TextField(
+            controller: openingCashController,
+            keyboardType: TextInputType.number,
+            inputFormatters: const [
+              IndonesianNumberInputFormatter(decimal: false),
+            ],
+            decoration: const InputDecoration(
+              labelText: 'Modal awal',
+              prefixIcon: Icon(Icons.payments_outlined),
+            ),
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: isBusy ? null : onOpenShift,
+            icon: const Icon(Icons.lock_open_outlined),
+            label: const Text('Buka Shift'),
+          ),
+        ] else ...[
+          TextField(
+            controller: actualCashController,
+            keyboardType: TextInputType.number,
+            inputFormatters: const [
+              IndonesianNumberInputFormatter(decimal: false),
+            ],
+            decoration: const InputDecoration(
+              labelText: 'Kas aktual saat tutup shift',
+              prefixIcon: Icon(Icons.fact_check_outlined),
+            ),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: isBusy ? null : onCloseShift,
+            icon: const Icon(Icons.lock_outline),
+            label: const Text('Tutup Shift'),
+          ),
+          const SizedBox(height: 18),
+          const Text(
+            'Kas Masuk / Keluar',
+            style: TextStyle(
+              color: AppPalette.navy,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                value: 'cash_in',
+                label: Text('Masuk'),
+                icon: Icon(Icons.south_west),
+              ),
+              ButtonSegment(
+                value: 'cash_out',
+                label: Text('Keluar'),
+                icon: Icon(Icons.north_east),
+              ),
+            ],
+            selected: {cashMovementType},
+            onSelectionChanged: isBusy
+                ? null
+                : (value) => onTypeChanged(value.first),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: amountController,
+            keyboardType: TextInputType.number,
+            inputFormatters: const [
+              IndonesianNumberInputFormatter(decimal: false),
+            ],
+            decoration: const InputDecoration(
+              labelText: 'Nominal',
+              prefixIcon: Icon(Icons.attach_money),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: reasonController,
+            decoration: const InputDecoration(
+              labelText: 'Alasan',
+              hintText: 'Contoh: tambah modal kas',
+              prefixIcon: Icon(Icons.edit_note_outlined),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: noteController,
+            decoration: const InputDecoration(
+              labelText: 'Catatan',
+              hintText: 'Opsional',
+              prefixIcon: Icon(Icons.notes_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: isBusy ? null : onSaveCashMovement,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Simpan Mutasi Kas'),
+          ),
+          if (movements.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            ...movements
+                .take(5)
+                .map((movement) => _ShiftMovementRow(movement: movement)),
+          ],
+        ],
+        if (pendingVarianceShifts.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          const Text(
+            'Approval Selisih Shift',
+            style: TextStyle(
+              color: AppPalette.navy,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...pendingVarianceShifts.map(
+            (item) => Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppPalette.ivory,
+                border: Border.all(color: AppPalette.line),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    item.cashierName,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Sistem ${_money(item.expectedCash)} - Aktual ${_money(item.actualCash)}',
+                  ),
+                  Text(
+                    'Selisih ${_money(item.cashVariance)}',
+                    style: const TextStyle(
+                      color: AppPalette.red,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  if (item.varianceReason?.isNotEmpty == true)
+                    Text(item.varianceReason!),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.icon(
+                      onPressed: isBusy ? null : () => onApproveVariance(item),
+                      icon: const Icon(Icons.verified_outlined),
+                      label: const Text('Approve'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ShiftMetricTile extends StatelessWidget {
+  const _ShiftMetricTile({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppPalette.mist,
+        border: Border.all(color: AppPalette.line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: AppPalette.blue),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: AppPalette.slate,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShiftMovementRow extends StatelessWidget {
+  const _ShiftMovementRow({required this.movement});
+
+  final ShiftCashMovement movement;
+
+  @override
+  Widget build(BuildContext context) {
+    final isOut = movement.type == 'cash_out';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppPalette.white,
+        border: Border.all(color: AppPalette.line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isOut ? Icons.north_east : Icons.south_west,
+            color: isOut ? AppPalette.red : AppPalette.success,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  movement.reason,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  _dateTimeLabel(movement.createdAt),
+                  style: const TextStyle(color: AppPalette.slate, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            _money(movement.amount),
+            style: TextStyle(
+              color: isOut ? AppPalette.red : AppPalette.success,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ProductPane extends StatelessWidget {
   const _ProductPane({
     required this.searchController,
@@ -527,6 +1227,7 @@ class _ProductPane extends StatelessWidget {
     required this.onCategoryChanged,
     required this.onSearchChanged,
     required this.onAdd,
+    required this.apiBaseUrl,
   });
 
   final TextEditingController searchController;
@@ -537,6 +1238,7 @@ class _ProductPane extends StatelessWidget {
   final ValueChanged<String> onCategoryChanged;
   final VoidCallback onSearchChanged;
   final ValueChanged<CatalogItem> onAdd;
+  final String apiBaseUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -545,66 +1247,86 @@ class _ProductPane extends StatelessWidget {
         child: SectionLoading(text: 'Memuat katalog produk...'),
       );
     }
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        color: AppPalette.white,
+        border: Border.all(color: AppPalette.line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.navy.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final width = max(0.0, constraints.maxWidth - 24);
-          final tileHeight = width < 600 ? 214.0 : 190.0;
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
+          final tileHeight = width < 600 ? 238.0 : 218.0;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                color: AppPalette.white,
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Expanded(
-                      child: Text(
-                        'Katalog',
-                        style: TextStyle(
-                          color: AppPalette.navy,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Katalog',
+                            style: TextStyle(
+                              color: AppPalette.navy,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
+                        SectionBadge(text: '${items.length} SKU'),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: searchController,
+                      onChanged: (_) => onSearchChanged(),
+                      decoration: const InputDecoration(
+                        hintText: 'Cari nama, SKU, barcode, kategori',
+                        prefixIcon: Icon(Icons.search),
                       ),
                     ),
-                    SectionBadge(text: '${items.length} SKU'),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 40,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: categories.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final category = categories[index];
+                          final selected = category == selectedCategory;
+                          return _CategoryPill(
+                            label: category,
+                            selected: selected,
+                            icon: category == 'Semua'
+                                ? Icons.apps_outlined
+                                : Icons.local_offer_outlined,
+                            onPressed: () => onCategoryChanged(category),
+                          );
+                        },
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: searchController,
-                  onChanged: (_) => onSearchChanged(),
-                  decoration: const InputDecoration(
-                    hintText: 'Cari nama, SKU, barcode, kategori',
-                    prefixIcon: Icon(Icons.search),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 38,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: categories.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (context, index) {
-                      final category = categories[index];
-                      final selected = category == selectedCategory;
-                      return ChoiceChip(
-                        selected: selected,
-                        label: Text(category),
-                        avatar: Icon(
-                          category == 'Semua'
-                              ? Icons.apps_outlined
-                              : Icons.local_offer_outlined,
-                          size: 18,
-                        ),
-                        onSelected: (_) => onCategoryChanged(category),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Expanded(
+              ),
+              const Divider(height: 1, color: AppPalette.line),
+              Expanded(
+                child: Container(
+                  color: AppPalette.ivory,
+                  padding: const EdgeInsets.all(12),
                   child: items.isEmpty
                       ? const Center(child: Text('Belum ada produk.'))
                       : GridView.builder(
@@ -619,13 +1341,14 @@ class _ProductPane extends StatelessWidget {
                           itemBuilder: (context, index) {
                             return _ProductTile(
                               item: items[index],
+                              apiBaseUrl: apiBaseUrl,
                               onAdd: () => onAdd(items[index]),
                             );
                           },
                         ),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
@@ -634,41 +1357,113 @@ class _ProductPane extends StatelessWidget {
 }
 
 class _ProductTile extends StatelessWidget {
-  const _ProductTile({required this.item, required this.onAdd});
+  const _ProductTile({
+    required this.item,
+    required this.apiBaseUrl,
+    required this.onAdd,
+  });
 
   final CatalogItem item;
+  final String apiBaseUrl;
   final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
-    final lowStock = item.availableBaseQty <= 0;
+    final lowStock = item.trackInventory && item.availableBaseQty <= 0;
     final radius = BorderRadius.circular(8);
-    return ClipRRect(
-      borderRadius: radius,
+    final imageUrl = _resolveProductImageUrl(
+      item.skuImageUrl?.isNotEmpty == true
+          ? item.skuImageUrl!
+          : item.productImageUrl,
+      apiBaseUrl,
+    );
+    return Material(
+      color: Colors.transparent,
       child: InkWell(
-        onTap: onAdd,
+        onTap: lowStock ? null : onAdd,
         borderRadius: radius,
         child: Ink(
           decoration: BoxDecoration(
-            border: Border.all(color: AppPalette.line),
+            border: Border.all(
+              color: lowStock
+                  ? AppPalette.red
+                  : AppPalette.blue.withValues(alpha: 0.22),
+              width: lowStock ? 1.8 : 1.2,
+            ),
             borderRadius: radius,
-            color: AppPalette.white,
+            color: lowStock
+                ? AppPalette.red.withValues(alpha: 0.055)
+                : AppPalette.white,
+            boxShadow: [
+              BoxShadow(
+                color: AppPalette.navy.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 5),
+              ),
+            ],
           ),
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    _ProductIcon(lowStock: lowStock),
-                    const Spacer(),
-                    IconButton.filledTonal(
-                      tooltip: 'Tambah',
-                      onPressed: onAdd,
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
+                SizedBox(
+                  height: 86,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: imageUrl == null
+                              ? _ProductImageFallback(lowStock: lowStock)
+                              : Image.network(
+                                  imageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      _ProductImageFallback(lowStock: lowStock),
+                                ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 6,
+                        top: 6,
+                        child: lowStock
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppPalette.red,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Text(
+                                  'Tidak bisa order',
+                                  style: TextStyle(
+                                    color: AppPalette.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: IconButton.filled(
+                          style: IconButton.styleFrom(
+                            backgroundColor: AppPalette.white,
+                            foregroundColor: AppPalette.blue,
+                            minimumSize: const Size(34, 34),
+                          ),
+                          tooltip: 'Tambah',
+                          onPressed: lowStock ? null : onAdd,
+                          icon: const Icon(Icons.add),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Expanded(child: _ProductTileText(item: item)),
@@ -681,25 +1476,89 @@ class _ProductTile extends StatelessWidget {
   }
 }
 
-class _ProductIcon extends StatelessWidget {
-  const _ProductIcon({required this.lowStock});
+class _CategoryPill extends StatelessWidget {
+  const _CategoryPill({
+    required this.label,
+    required this.selected,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(8),
+        child: Ink(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: selected ? AppPalette.blue : AppPalette.white,
+            border: Border.all(
+              color: selected ? AppPalette.blue : AppPalette.line,
+            ),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected ? AppPalette.white : AppPalette.blue,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? AppPalette.white : AppPalette.navy,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String? _resolveProductImageUrl(String? rawUrl, String apiBaseUrl) {
+  final value = rawUrl?.trim();
+  if (value == null || value.isEmpty) return null;
+  final parsed = Uri.tryParse(value);
+  if (parsed != null && parsed.hasScheme) return value;
+  final base = Uri.tryParse(apiBaseUrl);
+  if (base == null) return value;
+  return base.resolve(value.startsWith('/') ? value : '/$value').toString();
+}
+
+class _ProductImageFallback extends StatelessWidget {
+  const _ProductImageFallback({required this.lowStock});
 
   final bool lowStock;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 42,
-      height: 42,
       decoration: BoxDecoration(
         color: lowStock
             ? AppPalette.red.withValues(alpha: 0.10)
             : AppPalette.aqua,
-        borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(
         lowStock ? Icons.inventory_2_outlined : Icons.fastfood_outlined,
         color: lowStock ? AppPalette.red : AppPalette.blue,
+        size: 34,
       ),
     );
   }
@@ -712,14 +1571,18 @@ class _ProductTileText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final lowStock = item.trackInventory && item.availableBaseQty <= 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          item.skuName,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w800),
+        SizedBox(
+          height: 40,
+          child: Text(
+            item.skuName,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(height: 1.2, fontWeight: FontWeight.w900),
+          ),
         ),
         const SizedBox(height: 5),
         Text(
@@ -747,16 +1610,23 @@ class _ProductTileText extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
-            color: AppPalette.aqua.withValues(alpha: 0.28),
+            color: lowStock
+                ? AppPalette.red.withValues(alpha: 0.12)
+                : AppPalette.aqua.withValues(alpha: 0.28),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
-            'Stok ${_qty(item.availableBaseQty)} ${item.baseUnitCode ?? 'unit'}',
+            lowStock
+                ? 'Stok habis'
+                : item.trackInventory
+                ? 'Stok ${_qty(item.availableBaseQty)} ${item.baseUnitCode ?? 'unit'}'
+                : 'Non-stok',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w800),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: lowStock ? AppPalette.red : AppPalette.navy,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ),
       ],
@@ -1023,8 +1893,11 @@ class _PaymentSheetContent extends StatelessWidget {
     required this.roundingTotal,
     required this.paidTotal,
     required this.changeTotal,
+    required this.customers,
+    required this.customerId,
     required this.paymentMethods,
     required this.paymentAmountControllers,
+    required this.onCustomerChanged,
     required this.onPaymentMethodChanged,
     required this.onPaymentAmountChanged,
     required this.onDonationChanged,
@@ -1039,8 +1912,11 @@ class _PaymentSheetContent extends StatelessWidget {
   final double roundingTotal;
   final double paidTotal;
   final double changeTotal;
+  final List<Customer> customers;
+  final String customerId;
   final List<String> paymentMethods;
   final List<TextEditingController> paymentAmountControllers;
+  final ValueChanged<String?> onCustomerChanged;
   final void Function(int index, String method) onPaymentMethodChanged;
   final VoidCallback onPaymentAmountChanged;
   final VoidCallback onDonationChanged;
@@ -1051,7 +1927,11 @@ class _PaymentSheetContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canPay = paymentMethods.isNotEmpty && paidTotal + 0.000001 >= total;
+    final hasReceivable = paymentMethods.contains('receivable');
+    final canPay =
+        paymentMethods.isNotEmpty &&
+        paidTotal + 0.000001 >= total &&
+        (!hasReceivable || customerId.isNotEmpty);
     return ConstrainedBox(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.82,
@@ -1118,6 +1998,37 @@ class _PaymentSheetContent extends StatelessWidget {
           if (roundingTotal > 0) ...[
             const SizedBox(height: 10),
             _TotalRow(label: 'Pembulatan', value: _money(roundingTotal)),
+          ],
+          if (hasReceivable) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: customerId.isEmpty ? null : customerId,
+              decoration: const InputDecoration(
+                labelText: 'Pelanggan piutang',
+                prefixIcon: Icon(Icons.person_outline),
+              ),
+              items: customers
+                  .map(
+                    (customer) => DropdownMenuItem(
+                      value: customer.id,
+                      child: Text(
+                        customer.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: onCustomerChanged,
+            ),
+            if (customers.isEmpty) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'Belum ada pelanggan aktif. Buat pelanggan dari web terlebih dahulu.',
+                style: TextStyle(color: AppPalette.red, fontSize: 12),
+              ),
+            ],
           ],
           const SizedBox(height: 12),
           Flexible(
@@ -1308,9 +2219,11 @@ class _CartLineTile extends StatelessWidget {
             children: [
               _CartMetaChip(
                 icon: Icons.sell_outlined,
-                text: '${_money(line.unitPrice)} / ${line.unitLabel}',
+                text: line.item.trackInventory
+                    ? '${_money(line.unitPrice)} / ${line.unitLabel}'
+                    : _money(line.unitPrice),
               ),
-              unitControl,
+              if (line.item.trackInventory) unitControl,
               _QuantityStepper(
                 quantity: line.quantity,
                 onMinus: onMinus,
@@ -1458,40 +2371,6 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-class _MessageStrip extends StatelessWidget {
-  const _MessageStrip({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppPalette.amber.withValues(alpha: 0.12),
-          border: Border.all(color: AppPalette.amber.withValues(alpha: 0.28)),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.info_outline, color: AppPalette.amber, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                text,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _FloatingCartButton extends StatelessWidget {
   const _FloatingCartButton({
     required this.count,
@@ -1584,6 +2463,7 @@ class _SalesReportPane extends StatefulWidget {
   const _SalesReportPane({
     required this.report,
     required this.details,
+    required this.shiftSummary,
     required this.selectedRange,
     required this.isLoading,
     required this.outlets,
@@ -1593,10 +2473,13 @@ class _SalesReportPane extends StatefulWidget {
     required this.onOutletChanged,
     required this.onRefresh,
     required this.onReprint,
+    required this.onVoid,
+    required this.onRefund,
   });
 
   final SalesReport? report;
   final List<SalesDetail> details;
+  final ShiftSummary? shiftSummary;
   final ReportRange selectedRange;
   final bool isLoading;
   final List<Outlet> outlets;
@@ -1606,6 +2489,8 @@ class _SalesReportPane extends StatefulWidget {
   final ValueChanged<String> onOutletChanged;
   final VoidCallback onRefresh;
   final ValueChanged<SalesDetail> onReprint;
+  final ValueChanged<SalesDetail> onVoid;
+  final ValueChanged<SalesDetail> onRefund;
 
   @override
   State<_SalesReportPane> createState() => _SalesReportPaneState();
@@ -1622,6 +2507,8 @@ class _SalesReportPaneState extends State<_SalesReportPane> {
   @override
   Widget build(BuildContext context) {
     final current = widget.report ?? SalesReport.empty();
+    final cashInTotal = widget.shiftSummary?.shift.cashInTotal ?? 0;
+    final cashOutTotal = widget.shiftSummary?.shift.cashOutTotal ?? 0;
     final paymentOptions =
         widget.details
             .expand((item) => item.paymentMethods.split(','))
@@ -1686,152 +2573,159 @@ class _SalesReportPaneState extends State<_SalesReportPane> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppPalette.white,
+            border: Border.all(color: AppPalette.line),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: AppPalette.navy.withValues(alpha: 0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
                 children: [
-                  const Text(
-                    'Laporan Penjualan',
-                    style: TextStyle(
-                      color: AppPalette.navy,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 22,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Laporan Penjualan',
+                          style: TextStyle(
+                            color: AppPalette.navy,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 22,
+                          ),
+                        ),
+                        Text(
+                          effectiveOutletId ==
+                                  _PosShellState._allOutletsReportId
+                              ? 'Semua Outlet'
+                              : widget.outlets
+                                        .where(
+                                          (item) =>
+                                              item.id == effectiveOutletId,
+                                        )
+                                        .firstOrNull
+                                        ?.name ??
+                                    'Outlet',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppPalette.blue,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    effectiveOutletId == _PosShellState._allOutletsReportId
-                        ? 'Semua Outlet'
-                        : widget.outlets
-                                  .where((item) => item.id == effectiveOutletId)
-                                  .firstOrNull
-                                  ?.name ??
-                              'Outlet',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.copyWith(color: AppPalette.blue),
-                  ),
-                  Text(
-                    widget.selectedRange.label,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
+                  IconButton.filledTonal(
+                    tooltip: 'Refresh',
+                    onPressed: widget.isLoading ? null : widget.onRefresh,
+                    icon: const Icon(Icons.refresh),
                   ),
                 ],
               ),
-            ),
-            IconButton.filledTonal(
-              tooltip: 'Refresh',
-              onPressed: widget.isLoading ? null : widget.onRefresh,
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        AppSection(
-          title: 'Filter Laporan',
-          subtitle: 'Pilih outlet dan periode penjualan',
-          icon: Icons.tune,
-          headerColor: AppPalette.blue,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  initialValue: effectiveOutletId,
-                  decoration: const InputDecoration(
-                    labelText: 'Outlet Laporan',
-                    prefixIcon: Icon(Icons.storefront_outlined),
-                  ),
-                  items: [
-                    if (widget.canViewAllOutlets)
-                      const DropdownMenuItem(
-                        value: _PosShellState._allOutletsReportId,
-                        child: Text('Semua Outlet'),
-                      ),
-                    ...widget.outlets.map(
-                      (outlet) => DropdownMenuItem(
-                        value: outlet.id,
-                        child: Text(
-                          outlet.name,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: effectiveOutletId,
+                decoration: const InputDecoration(
+                  labelText: 'Outlet Laporan',
+                  prefixIcon: Icon(Icons.storefront_outlined),
+                ),
+                items: [
+                  if (widget.canViewAllOutlets)
+                    const DropdownMenuItem(
+                      value: _PosShellState._allOutletsReportId,
+                      child: Text('Semua Outlet'),
                     ),
-                  ],
-                  onChanged: widget.isLoading
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            widget.onOutletChanged(value);
-                          }
-                        },
-                ),
-                const SizedBox(height: 12),
-                SegmentedButton<ReportRange>(
-                  segments: ReportRange.values
-                      .map(
-                        (range) => ButtonSegment(
-                          value: range,
-                          label: Text(range.shortLabel),
-                          icon: Icon(range.icon),
-                        ),
-                      )
-                      .toList(),
-                  selected: {widget.selectedRange},
-                  onSelectionChanged: widget.isLoading
-                      ? null
-                      : (value) => widget.onRangeChanged(value.first),
-                ),
-              ],
-            ),
+                  ...widget.outlets.map(
+                    (outlet) => DropdownMenuItem(
+                      value: outlet.id,
+                      child: Text(outlet.name, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                ],
+                onChanged: widget.isLoading
+                    ? null
+                    : (value) {
+                        if (value != null) widget.onOutletChanged(value);
+                      },
+              ),
+              const SizedBox(height: 10),
+              SegmentedButton<ReportRange>(
+                segments: ReportRange.values
+                    .map(
+                      (range) => ButtonSegment(
+                        value: range,
+                        label: Text(range.shortLabel),
+                        icon: Icon(range.icon),
+                      ),
+                    )
+                    .toList(),
+                selected: {widget.selectedRange},
+                onSelectionChanged: widget.isLoading
+                    ? null
+                    : (value) => widget.onRangeChanged(value.first),
+              ),
+              const SizedBox(height: 12),
+              _ReportHeroCard(
+                report: current,
+                rangeLabel: widget.selectedRange.label,
+              ),
+              const SizedBox(height: 12),
+              GridView.count(
+                crossAxisCount: 2,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 1.22,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _ReportMetricCard(
+                    title: 'Transaksi',
+                    value: current.transactionCount.toString(),
+                    icon: Icons.receipt_long_outlined,
+                  ),
+                  _ReportMetricCard(
+                    title: 'Net Sales',
+                    value: _money(current.netSales),
+                    icon: Icons.trending_up,
+                  ),
+                  _ReportMetricCard(
+                    title: 'Rata-rata',
+                    value: _money(
+                      current.transactionCount == 0
+                          ? 0
+                          : current.netSales / current.transactionCount,
+                    ),
+                    icon: Icons.inventory_2_outlined,
+                  ),
+                  _ReportMetricCard(
+                    title: 'Laba Kotor',
+                    value: _money(current.grossProfit),
+                    icon: Icons.savings_outlined,
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 16),
-        _ReportHeroCard(report: current),
         const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 720
-                ? 4
-                : (constraints.maxWidth >= 520 ? 2 : 1);
-            return GridView.count(
-              crossAxisCount: columns,
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: columns == 1 ? 3.2 : 1.45,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _ReportMetricCard(
-                  title: 'Transaksi',
-                  value: current.transactionCount.toString(),
-                  icon: Icons.receipt_long_outlined,
-                ),
-                _ReportMetricCard(
-                  title: 'Gross Sales',
-                  value: _money(current.grossSales),
-                  icon: Icons.trending_up,
-                ),
-                _ReportMetricCard(
-                  title: 'HPP',
-                  value: _money(current.cogs),
-                  icon: Icons.inventory_2_outlined,
-                ),
-                _ReportMetricCard(
-                  title: 'Laba Kotor',
-                  value: _money(current.grossProfit),
-                  icon: Icons.savings_outlined,
-                ),
-              ],
-            );
-          },
+        _ReportSummaryTotal(
+          report: current,
+          isLoading: widget.isLoading,
+          cashInTotal: cashInTotal,
+          cashOutTotal: cashOutTotal,
         ),
-        const SizedBox(height: 12),
-        _ReportSummaryTotal(report: current, isLoading: widget.isLoading),
         const SizedBox(height: 18),
         AppSection(
           title: 'List Transaksi',
@@ -1982,6 +2876,12 @@ class _SalesReportPaneState extends State<_SalesReportPane> {
                       child: _SalesDetailCard(
                         item: item,
                         onReprint: () => widget.onReprint(item),
+                        onVoid: item.status == 'completed'
+                            ? () => widget.onVoid(item)
+                            : null,
+                        onRefund: item.status == 'completed'
+                            ? () => widget.onRefund(item)
+                            : null,
                       ),
                     ),
                   ),
@@ -1995,10 +2895,17 @@ class _SalesReportPaneState extends State<_SalesReportPane> {
 }
 
 class _SalesDetailCard extends StatelessWidget {
-  const _SalesDetailCard({required this.item, required this.onReprint});
+  const _SalesDetailCard({
+    required this.item,
+    required this.onReprint,
+    required this.onVoid,
+    required this.onRefund,
+  });
 
   final SalesDetail item;
   final VoidCallback onReprint;
+  final VoidCallback? onVoid;
+  final VoidCallback? onRefund;
 
   @override
   Widget build(BuildContext context) {
@@ -2106,13 +3013,27 @@ class _SalesDetailCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: onReprint,
-                icon: const Icon(Icons.print_outlined),
-                label: const Text('Cetak Ulang Struk'),
-              ),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: onVoid,
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('Void'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onRefund,
+                  icon: const Icon(Icons.keyboard_return_outlined),
+                  label: const Text('Refund'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onReprint,
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Cetak Ulang'),
+                ),
+              ],
             ),
           ],
         ),
@@ -2190,10 +3111,17 @@ class _MobilePagination extends StatelessWidget {
 }
 
 class _ReportSummaryTotal extends StatelessWidget {
-  const _ReportSummaryTotal({required this.report, required this.isLoading});
+  const _ReportSummaryTotal({
+    required this.report,
+    required this.isLoading,
+    required this.cashInTotal,
+    required this.cashOutTotal,
+  });
 
   final SalesReport report;
   final bool isLoading;
+  final double cashInTotal;
+  final double cashOutTotal;
 
   @override
   Widget build(BuildContext context) {
@@ -2221,6 +3149,8 @@ class _ReportSummaryTotal extends StatelessWidget {
             ),
             _TotalRow(label: 'Total Gross', value: _money(report.grossSales)),
             _TotalRow(label: 'Total Net', value: _money(report.netSales)),
+            _TotalRow(label: 'Kas Masuk', value: _money(cashInTotal)),
+            _TotalRow(label: 'Kas Keluar', value: _money(cashOutTotal)),
             _TotalRow(label: 'Total HPP', value: _money(report.cogs)),
             _TotalRow(label: 'Total Laba', value: _money(report.grossProfit)),
             _TotalRow(label: 'Rata-rata / Struk', value: _money(average)),
@@ -2237,16 +3167,17 @@ class _ReportSummaryTotal extends StatelessWidget {
 }
 
 class _ReportHeroCard extends StatelessWidget {
-  const _ReportHeroCard({required this.report});
+  const _ReportHeroCard({required this.report, required this.rangeLabel});
 
   final SalesReport report;
+  final String rangeLabel;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary,
+        color: AppPalette.navy,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -2273,19 +3204,50 @@ class _ReportHeroCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              const Icon(
-                Icons.point_of_sale,
-                color: AppPalette.ivory,
-                size: 18,
+              _DarkPill(
+                icon: Icons.point_of_sale,
+                text: '${report.transactionCount} transaksi',
               ),
-              const SizedBox(width: 6),
-              Text(
-                '${report.transactionCount} transaksi selesai',
-                style: const TextStyle(color: AppPalette.ivory),
-              ),
+              _DarkPill(icon: Icons.date_range, text: rangeLabel),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DarkPill extends StatelessWidget {
+  const _DarkPill({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppPalette.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppPalette.white.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppPalette.white),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: const TextStyle(
+              color: AppPalette.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
@@ -2306,31 +3268,55 @@ class _ReportMetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const Spacer(),
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelMedium,
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppPalette.white,
+        border: Border.all(color: AppPalette.line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.navy.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppPalette.aqua.withValues(alpha: 0.38),
+              borderRadius: BorderRadius.circular(8),
             ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+            child: Icon(icon, color: AppPalette.blue, size: 19),
+          ),
+          const Spacer(),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppPalette.slate,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppPalette.navy,
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2489,6 +3475,26 @@ String buildReceiptText(ReceiptLayout layout, ReceiptData receipt) {
     return '${' ' * leftPad}$safe';
   }
 
+  List<String> noteLines(String value) {
+    final note = value.trim().isEmpty ? 'Terima kasih' : value;
+    return note
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .split('\n')
+        .expand((line) {
+          final safeLine = line.trim();
+          if (safeLine.isEmpty) return <String>[''];
+          final chunks = <String>[];
+          for (var index = 0; index < safeLine.length; index += width) {
+            chunks.add(
+              safeLine.substring(index, min(index + width, safeLine.length)),
+            );
+          }
+          return chunks;
+        })
+        .toList();
+  }
+
   String row(String left, String right) {
     final safeRight = right.length > width ? right.substring(0, width) : right;
     final leftWidth = max(0, width - safeRight.length - 1);
@@ -2501,8 +3507,8 @@ String buildReceiptText(ReceiptLayout layout, ReceiptData receipt) {
   void renderBlock(String block) {
     if (block == 'logo') return;
     if (block == 'outlet') lines.add(center(receipt.outletName));
-    if (block == 'address') {
-      lines.add(center(_dateTimeLabel(receipt.createdAt)));
+    if (block == 'address' && receipt.outletAddress.trim().isNotEmpty) {
+      lines.addAll(noteLines(receipt.outletAddress).map(center));
     }
     if (block == 'cashier') lines.add(center('Kasir: ${receipt.cashierName}'));
     if (block == 'receiptNumber') {
@@ -2514,7 +3520,9 @@ String buildReceiptText(ReceiptLayout layout, ReceiptData receipt) {
         lines.add(clip(item.name));
         lines.add(
           row(
-            '${_qty(item.quantity)} ${item.unitLabel} x ${_money(item.unitPrice)}',
+            item.trackInventory
+                ? '${_qty(item.quantity)} ${item.unitLabel} x ${_money(item.unitPrice)}'
+                : '${_qty(item.quantity)} x ${_money(item.unitPrice)}',
             _money(item.lineTotal),
           ),
         );
@@ -2579,7 +3587,7 @@ String buildReceiptText(ReceiptLayout layout, ReceiptData receipt) {
     }
     if (block == 'note') {
       lines.add(separator);
-      lines.add(center(layout.footerNote));
+      lines.addAll(noteLines(layout.footerNote).map(center));
     }
   }
 

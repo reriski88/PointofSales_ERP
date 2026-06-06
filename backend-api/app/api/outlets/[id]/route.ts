@@ -1,6 +1,7 @@
 import { outletRepository } from "@/backend/repositories/outlet-repository";
 import { writeAudit } from "@/lib/audit";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
+import { deleteReplacedImageObject } from "@/lib/local-image-storage";
 import { requireActor, requirePermission } from "@/lib/rbac";
 import { updateOutletSchema } from "@/lib/validation";
 
@@ -37,6 +38,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       after: updated,
       request,
     });
+
+    await deleteReplacedImageObject(existing.logoUrl, updated.logoUrl);
 
     return ok(updated);
   } catch (error) {

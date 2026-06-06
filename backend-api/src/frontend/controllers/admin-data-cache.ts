@@ -12,6 +12,7 @@ export type CachedProfile = {
   id?: string;
   name?: string;
   email?: string;
+  image?: string | null;
   role: string;
 };
 
@@ -30,6 +31,7 @@ export type CachedUnit = {
   code: string;
   kind: string;
   toBaseFactor: string;
+  isActive?: boolean;
 };
 
 export type CurrentAccess = {
@@ -82,7 +84,7 @@ async function getCached<T>(key: string, url: string, options?: { force?: boolea
   const request = fetch(url)
     .then(async (response) => {
       if (!response.ok) {
-        throw new Error(`Request failed: ${url}`);
+        throw new Error(await readError(response, `Request failed: ${url} (${response.status})`));
       }
       const json = (await response.json()) as ApiResponse<T>;
       writeCache(key, json.data);
@@ -92,6 +94,16 @@ async function getCached<T>(key: string, url: string, options?: { force?: boolea
 
   pendingRequests.set(key, request);
   return request;
+}
+
+async function readError(response: Response, fallback: string) {
+  try {
+    const json = (await response.json()) as { error?: { code?: string; message?: string } };
+    const code = json.error?.code ? `${json.error.code}: ` : "";
+    return json.error?.message ? `${code}${json.error.message}` : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function readMemory<T>(key: string) {

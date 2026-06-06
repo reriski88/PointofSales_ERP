@@ -61,6 +61,9 @@ class _PosShellState extends State<PosShell> {
   final _searchController = TextEditingController();
   final _openingCashController = TextEditingController(text: '0');
   final _actualCashController = TextEditingController();
+  final _cashMovementAmountController = TextEditingController();
+  final _cashMovementReasonController = TextEditingController();
+  final _cashMovementNoteController = TextEditingController();
   final _discountController = TextEditingController(text: '0');
   final _promotionCodeController = TextEditingController();
   final _taxController = TextEditingController(text: '0');
@@ -86,7 +89,10 @@ class _PosShellState extends State<PosShell> {
   Timer? _idleTimer;
   Timer? _quoteTimer;
   Timer? _connectivityProbeTimer;
+  Timer? _realtimeReconnectTimer;
+  Timer? _realtimeRefreshTimer;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<RealtimeEvent>? _realtimeSubscription;
 
   var _isBooting = true;
   var _isBusy = false;
@@ -109,8 +115,16 @@ class _PosShellState extends State<PosShell> {
   var _isConnectingBluetoothPrinter = false;
   var _isPrintingReceipt = false;
   var _isConnectivityProbeRunning = false;
+  var _isRealtimeConnected = false;
+  var _isRealtimeRefreshRunning = false;
+  var _isApplyingRealtimeRefresh = false;
+  var _isAutoSyncRunning = false;
+  var _realtimeReconnectAttempt = 0;
+  var _cashMovementType = 'cash_in';
+  final Set<String> _pendingRealtimeTopics = {};
   String? _connectedBluetoothTarget;
   String? _wasteSkuId;
+  String _customerId = '';
   String _activeCartSessionId = 'main';
 
   CurrentUser? _currentUser;
@@ -118,9 +132,12 @@ class _PosShellState extends State<PosShell> {
   Outlet? _selectedOutlet;
   String? _reportOutletId;
   Shift? _activeShift;
+  ShiftSummary? _shiftSummary;
+  List<PendingVarianceShift> _pendingVarianceShifts = [];
   SalesReport? _salesReport;
   List<SalesDetail> _salesDetails = [];
   List<CatalogItem> _catalog = [];
+  List<Customer> _customers = [];
   List<PromotionRule> _promotions = [];
   List<CartSession> _cartSessions = [CartSession.empty('main', 'Pelanggan 1')];
   List<Map<String, dynamic>> _pendingSales = [];
@@ -153,7 +170,10 @@ class _PosShellState extends State<PosShell> {
     _idleTimer?.cancel();
     _quoteTimer?.cancel();
     _connectivityProbeTimer?.cancel();
+    _realtimeReconnectTimer?.cancel();
+    _realtimeRefreshTimer?.cancel();
     _connectivitySubscription?.cancel();
+    _realtimeSubscription?.cancel();
     for (final controller in _activityControllers) {
       controller.removeListener(_resetIdleTimer);
     }
@@ -171,6 +191,9 @@ class _PosShellState extends State<PosShell> {
     _searchController.dispose();
     _openingCashController.dispose();
     _actualCashController.dispose();
+    _cashMovementAmountController.dispose();
+    _cashMovementReasonController.dispose();
+    _cashMovementNoteController.dispose();
     _discountController.dispose();
     _promotionCodeController.dispose();
     _taxController.dispose();
@@ -194,6 +217,9 @@ class _PosShellState extends State<PosShell> {
     _searchController,
     _openingCashController,
     _actualCashController,
+    _cashMovementAmountController,
+    _cashMovementReasonController,
+    _cashMovementNoteController,
     _discountController,
     _promotionCodeController,
     _taxController,
@@ -253,6 +279,8 @@ class _PosShellState extends State<PosShell> {
     if (_isSignedIn) {
       _resetIdleTimer();
       await _loadWorkspace(showErrors: false);
+      _ensureRealtimeConnected();
+      _maybeAutoSyncPending();
     }
 
     if (mounted) {
@@ -262,6 +290,7 @@ class _PosShellState extends State<PosShell> {
 
   void _syncAuthState(AuthState state) {
     if (!mounted) return;
+    final toastMessage = state.message;
     setState(() {
       _api = _authCubit.api;
       _prefs = state.prefs ?? _prefs;
@@ -281,10 +310,15 @@ class _PosShellState extends State<PosShell> {
         _activeShift = null;
       }
     });
+    if (!state.isSignedIn) {
+      _stopRealtime();
+    }
+    if (toastMessage.isNotEmpty) _queueToast(toastMessage);
   }
 
   void _syncCartState(CartState state) {
     if (!mounted) return;
+    final toastMessage = state.message;
     setState(() {
       _cartSessions = state.sessions;
       _activeCartSessionId = state.activeSessionId;
@@ -296,10 +330,13 @@ class _PosShellState extends State<PosShell> {
         _message = state.message;
       }
     });
+    if (toastMessage.isNotEmpty) _queueToast(toastMessage);
   }
 
   void _syncCheckoutState(CheckoutState state) {
     if (!mounted) return;
+    final toastMessage = state.message;
+    final wasOnline = _isOnline;
     setState(() {
       _pendingSales = state.pendingSales;
       _pendingWastes = state.pendingWastes;
@@ -309,15 +346,27 @@ class _PosShellState extends State<PosShell> {
         _message = state.message;
       }
     });
+    if (toastMessage.isNotEmpty && !_isApplyingRealtimeRefresh) {
+      _queueToast(toastMessage);
+    }
+    if (!wasOnline && state.isOnline) {
+      _maybeAutoSyncPending();
+    }
+    if (state.isOnline && _isSignedIn) {
+      _ensureRealtimeConnected();
+      _maybeAutoSyncPending();
+    }
   }
 
   void _syncWorkspaceState(WorkspaceState state) {
     if (!mounted) return;
+    final toastMessage = state.message;
     setState(() {
       _outlets = state.outlets;
       _selectedOutlet = state.selectedOutlet;
       _reportOutletId = state.reportOutletId;
       _activeShift = state.activeShift;
+      _shiftSummary = state.shiftSummary;
       if (state.activeShift != null && _actualCashController.text.isEmpty) {
         _actualCashController.text = _moneyPlain(
           state.activeShift!.expectedCash,
@@ -338,6 +387,7 @@ class _PosShellState extends State<PosShell> {
         _message = state.message;
       }
     });
+    if (toastMessage.isNotEmpty) _queueToast(toastMessage);
   }
 
   Future<void> _signIn() async {
@@ -352,6 +402,8 @@ class _PosShellState extends State<PosShell> {
     _resetIdleTimer();
     if (_authCubit.state.isOnline) {
       await _loadWorkspace();
+      _ensureRealtimeConnected();
+      _maybeAutoSyncPending();
     } else {
       _showToast('Login offline berhasil.');
     }
@@ -359,6 +411,7 @@ class _PosShellState extends State<PosShell> {
 
   Future<void> _logout({String message = 'Sesi kasir keluar.'}) async {
     _idleTimer?.cancel();
+    _stopRealtime();
     await _authCubit.logout(message: message);
     _workspaceCubit.clearSession();
     _cartCubit.reset();
@@ -400,6 +453,7 @@ class _PosShellState extends State<PosShell> {
       if (mounted && _isOnline) {
         setState(() => _isOnline = false);
       }
+      _stopRealtime();
       return;
     }
     unawaited(_probeApiConnectivity());
@@ -410,8 +464,16 @@ class _PosShellState extends State<PosShell> {
     _isConnectivityProbeRunning = true;
     try {
       final online = await _api.checkHealth();
+      final wasOnline = _isOnline;
       if (mounted && online != _isOnline) {
         setState(() => _isOnline = online);
+      }
+      if (!wasOnline && online && _isSignedIn) {
+        _ensureRealtimeConnected();
+        _maybeAutoSyncPending();
+      }
+      if (!online) {
+        _stopRealtime();
       }
     } finally {
       _isConnectivityProbeRunning = false;
@@ -440,9 +502,50 @@ class _PosShellState extends State<PosShell> {
       reportRange: _reportRange,
       showErrors: showErrors,
     );
+    await _loadCustomers(showErrors: showErrors);
     await _savePrinterSettings(showMessage: false);
     if (_selectedOutlet != null) {
+      await _loadPendingVarianceShifts(showErrors: false);
       await _loadSalesReport(showErrors: false);
+    }
+  }
+
+  Future<void> _loadPendingVarianceShifts({bool showErrors = true}) async {
+    final outlet = _selectedOutlet;
+    final role = _currentUser?.role;
+    if (!_isSignedIn ||
+        !_isOnline ||
+        outlet == null ||
+        (role != 'owner' && role != 'admin_outlet')) {
+      if (mounted) setState(() => _pendingVarianceShifts = []);
+      return;
+    }
+    try {
+      final rows = await _api.pendingVarianceShifts(outlet.id);
+      if (mounted) setState(() => _pendingVarianceShifts = rows);
+    } catch (_) {
+      if (showErrors && mounted) {
+        setState(() => _message = 'Data approval selisih shift gagal dimuat.');
+      }
+    }
+  }
+
+  Future<void> _loadCustomers({bool showErrors = true}) async {
+    if (!_isSignedIn || !_isOnline) return;
+    try {
+      final customers = await _api.fetchCustomers();
+      if (!mounted) return;
+      setState(() {
+        _customers = customers;
+        if (_customerId.isNotEmpty &&
+            !customers.any((item) => item.id == _customerId)) {
+          _customerId = '';
+        }
+      });
+    } catch (_) {
+      if (showErrors && mounted) {
+        setState(() => _message = 'Data pelanggan gagal dimuat.');
+      }
     }
   }
 
@@ -640,6 +743,7 @@ class _PosShellState extends State<PosShell> {
     _cartCubit.reset();
     setState(() {
       _resetPaymentLines();
+      _customerId = '';
       _message = '';
     });
     await _runBusy(
@@ -653,11 +757,29 @@ class _PosShellState extends State<PosShell> {
     if (_selectedOutlet == null) {
       return;
     }
+    final openingCash = _parseNumber(_openingCashController.text);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _PosConfirmDialog(
+        title: 'Buka shift kasir?',
+        message:
+            'Shift akan aktif untuk outlet ini. Transaksi baru masuk ke shift yang dibuka.',
+        confirmLabel: 'Buka shift',
+        icon: Icons.lock_open_outlined,
+        details: [
+          _PosConfirmDetail('Outlet', _selectedOutlet!.name),
+          _PosConfirmDetail('Modal awal', _money(openingCash)),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
     await _runBusy(
       () => _workspaceCubit.openShift(
         api: _api,
         prefs: _prefs,
-        openingCash: _parseNumber(_openingCashController.text),
+        openingCash: openingCash,
       ),
     );
     final shift = _workspaceCubit.state.activeShift;
@@ -678,16 +800,64 @@ class _PosShellState extends State<PosShell> {
       _showToast(message);
       return;
     }
+    final actualCash = _parseNumber(_actualCashController.text);
+    final variance = actualCash - _activeShift!.expectedCash;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _PosConfirmDialog(
+        title: 'Tutup shift kasir?',
+        message:
+            'Shift akan dikunci. Transaksi berikutnya wajib buka shift baru.',
+        confirmLabel: 'Tutup shift',
+        icon: Icons.lock_outline,
+        danger: variance.abs() >= 1,
+        details: [
+          _PosConfirmDetail('Kas sistem', _money(_activeShift!.expectedCash)),
+          _PosConfirmDetail('Kas aktual', _money(actualCash)),
+          _PosConfirmDetail(
+            'Selisih',
+            _money(variance),
+            negative: variance < 0,
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
     await _runBusy(
       () => _workspaceCubit.closeShift(
         api: _api,
         prefs: _prefs,
-        actualCash: _parseNumber(_actualCashController.text),
+        actualCash: actualCash,
       ),
     );
     if (_workspaceCubit.state.activeShift == null) {
       _cartCubit.reset();
       setState(_resetPaymentLines);
+    }
+    await _loadPendingVarianceShifts(showErrors: false);
+  }
+
+  Future<void> _refreshShiftSummary() async {
+    await _workspaceCubit.loadShiftSummary(api: _api);
+  }
+
+  Future<void> _saveCashMovement() async {
+    await _runBusy(
+      () => _workspaceCubit.createCashMovement(
+        api: _api,
+        amount: _parseNumber(_cashMovementAmountController.text),
+        type: _cashMovementType,
+        reason: _cashMovementReasonController.text.trim(),
+        note: _cashMovementNoteController.text.trim(),
+      ),
+      failurePrefix: 'Mutasi kas gagal',
+    );
+    if (_workspaceCubit.state.message.contains('dicatat')) {
+      _cashMovementAmountController.clear();
+      _cashMovementReasonController.clear();
+      _cashMovementNoteController.clear();
     }
   }
 
@@ -716,7 +886,7 @@ class _PosShellState extends State<PosShell> {
       context: context,
       builder: (context) => _QuantityEditDialog(
         productName: line.item.skuName,
-        unitLabel: line.unitLabel,
+        unitLabel: line.item.trackInventory ? line.unitLabel : '',
         initialValue: _qty(line.quantity),
       ),
     );
@@ -837,7 +1007,9 @@ class _PosShellState extends State<PosShell> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Stok tersedia: ${_qty(selectedItem.availableBaseQty)} ${selectedItem.baseUnitCode ?? 'unit'}',
+                          selectedItem.trackInventory
+                              ? 'Stok tersedia: ${_qty(selectedItem.availableBaseQty)} ${selectedItem.baseUnitCode ?? 'unit'}'
+                              : 'Produk non-stok tidak bisa dicatat sebagai remahan.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const SizedBox(height: 14),
@@ -883,6 +1055,12 @@ class _PosShellState extends State<PosShell> {
     }
     if (item.baseUnitId == null || item.baseUnitId!.isEmpty) {
       setState(() => _message = 'Satuan dasar produk belum tersedia.');
+      return false;
+    }
+    if (!item.trackInventory) {
+      setState(
+        () => _message = 'Produk non-stok tidak bisa dicatat sebagai remahan.',
+      );
       return false;
     }
     if (quantity <= 0) {
@@ -932,10 +1110,36 @@ class _PosShellState extends State<PosShell> {
     return success;
   }
 
+  Future<void> _approveShiftVariance(PendingVarianceShift item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _PosConfirmDialog(
+        title: 'Approve selisih shift?',
+        message:
+            'Shift ${item.cashierName} dengan selisih ${_money(item.cashVariance)} akan disetujui.',
+        confirmLabel: 'Approve',
+        icon: Icons.verified_outlined,
+      ),
+    );
+    if (confirmed != true) return;
+    await _runBusy(() async {
+      await _api.approveShiftVariance(item.id);
+      _showToast('Selisih shift berhasil di-approve.');
+      await _loadPendingVarianceShifts(showErrors: false);
+      await _loadSalesReport(showErrors: false);
+    }, failurePrefix: 'Approve selisih shift gagal');
+  }
+
   Future<void> _checkout() async {
     final outlet = _selectedOutlet;
     final shift = _activeShift;
     final stockMessage = _firstStockValidationMessage();
+    if (_hasReceivablePayment && _customerId.isEmpty) {
+      const message = 'Pilih pelanggan untuk pembayaran piutang.';
+      setState(() => _message = message);
+      _showToast(message);
+      return;
+    }
     await _refreshSaleQuote(showErrors: true);
     if (_promotionCodes.isNotEmpty && _currentQuote == null) {
       const message =
@@ -944,11 +1148,15 @@ class _PosShellState extends State<PosShell> {
       _showToast(message);
       return;
     }
-    final payments = _normalizedCartPayments;
+    final payments = _salePayments;
+    final realPaymentIndexes = <int>[
+      for (var index = 0; index < _paymentMethods.length; index += 1)
+        if (_paymentMethods[index] != 'receivable') index,
+    ];
     final hasEmptySplitAmount =
-        _paymentMethods.length > 1 &&
-        _paymentAmountControllers.any(
-          (controller) => _parseNumber(controller.text) <= 0,
+        (realPaymentIndexes.length > 1 || _hasReceivablePayment) &&
+        realPaymentIndexes.any(
+          (index) => _parseNumber(_paymentAmountControllers[index].text) <= 0,
         );
     final result = await _checkoutCubit.checkout(
       api: _api,
@@ -971,6 +1179,10 @@ class _PosShellState extends State<PosShell> {
       grandTotal: _grandTotal,
       cashTenderedTotal: _cashTenderedTotal,
       changeTotal: _changeTotal,
+      customerId: _customerId,
+      hasReceivablePayment: _hasReceivablePayment,
+      receivableAmount: _receivableTotal,
+      nonCashOverpaid: _nonCashOverpaid,
       promotionCodes: _promotionCodes,
       stockMessage: stockMessage,
       hasEmptySplitAmount: hasEmptySplitAmount,
@@ -985,6 +1197,7 @@ class _PosShellState extends State<PosShell> {
     _taxController.text = '0';
     _serviceChargeController.text = '0';
     _donationController.text = '0';
+    setState(() => _customerId = '');
     _resetPaymentLines();
     _showToast(result.toast);
     await _printReceipt(result.receiptData);
@@ -1020,7 +1233,8 @@ class _PosShellState extends State<PosShell> {
     final shouldCheckout = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
@@ -1032,38 +1246,59 @@ class _PosShellState extends State<PosShell> {
             return SafeArea(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
-                  16,
+                  12,
                   0,
-                  16,
+                  12,
                   MediaQuery.of(context).viewInsets.bottom + 16,
                 ),
-                child: _PaymentSheetContent(
-                  total: _grandTotal,
-                  donationController: _donationController,
-                  roundingTotal: _roundingTotal,
-                  paidTotal: _paidTotal,
-                  changeTotal: _changeTotal,
-                  paymentMethods: _paymentMethods,
-                  paymentAmountControllers: _paymentAmountControllers,
-                  onPaymentMethodChanged: (index, method) {
-                    _setPaymentMethod(index, method);
-                    refreshSheet();
-                  },
-                  onPaymentAmountChanged: refreshSheet,
-                  onDonationChanged: () {
-                    _scheduleSaleQuoteRefresh();
-                    refreshSheet();
-                  },
-                  onAddPayment: () {
-                    _addPaymentLine();
-                    refreshSheet();
-                  },
-                  onRemovePayment: (index) {
-                    _removePaymentLine(index);
-                    refreshSheet();
-                  },
-                  onCancel: () => Navigator.pop(context, false),
-                  onSubmit: () => Navigator.pop(context, true),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppPalette.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppPalette.line),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppPalette.navy.withValues(alpha: 0.18),
+                        blurRadius: 28,
+                        offset: const Offset(0, 14),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(16),
+                  child: _PaymentSheetContent(
+                    total: _grandTotal,
+                    donationController: _donationController,
+                    roundingTotal: _roundingTotal,
+                    paidTotal: _paidTotal,
+                    changeTotal: _changeTotal,
+                    customers: _customers,
+                    customerId: _customerId,
+                    paymentMethods: _paymentMethods,
+                    paymentAmountControllers: _paymentAmountControllers,
+                    onCustomerChanged: (value) {
+                      setState(() => _customerId = value ?? '');
+                      refreshSheet();
+                    },
+                    onPaymentMethodChanged: (index, method) {
+                      _setPaymentMethod(index, method);
+                      refreshSheet();
+                    },
+                    onPaymentAmountChanged: refreshSheet,
+                    onDonationChanged: () {
+                      _scheduleSaleQuoteRefresh();
+                      refreshSheet();
+                    },
+                    onAddPayment: () {
+                      _addPaymentLine();
+                      refreshSheet();
+                    },
+                    onRemovePayment: (index) {
+                      _removePaymentLine(index);
+                      refreshSheet();
+                    },
+                    onCancel: () => Navigator.pop(context, false),
+                    onSubmit: () => Navigator.pop(context, true),
+                  ),
                 ),
               ),
             );
@@ -1404,6 +1639,147 @@ class _PosShellState extends State<PosShell> {
     }
   }
 
+  void _maybeAutoSyncPending() {
+    if (!_isSignedIn || !_isOnline || _pendingSyncCount <= 0) {
+      return;
+    }
+    unawaited(_autoSyncPending());
+  }
+
+  Future<void> _autoSyncPending() async {
+    if (_isAutoSyncRunning || !_isOnline || _pendingSyncCount <= 0) {
+      return;
+    }
+    _isAutoSyncRunning = true;
+    try {
+      _showToast('Koneksi kembali online. Sync antrean offline...');
+      await _syncPending();
+    } finally {
+      _isAutoSyncRunning = false;
+    }
+  }
+
+  void _ensureRealtimeConnected() {
+    if (!_isSignedIn || !_isOnline || _isRealtimeConnected) {
+      return;
+    }
+    _realtimeReconnectTimer?.cancel();
+    _realtimeSubscription?.cancel();
+    _isRealtimeConnected = true;
+    _realtimeSubscription = _api.realtimeEvents().listen(
+      _handleRealtimeEvent,
+      onError: (_) {
+        _isRealtimeConnected = false;
+        _scheduleRealtimeReconnect();
+      },
+      onDone: () {
+        _isRealtimeConnected = false;
+        _scheduleRealtimeReconnect();
+      },
+      cancelOnError: true,
+    );
+  }
+
+  void _stopRealtime() {
+    _realtimeReconnectTimer?.cancel();
+    _realtimeRefreshTimer?.cancel();
+    _realtimeSubscription?.cancel();
+    _realtimeSubscription = null;
+    _isRealtimeConnected = false;
+    _realtimeReconnectAttempt = 0;
+    _pendingRealtimeTopics.clear();
+  }
+
+  void _scheduleRealtimeReconnect() {
+    if (!_isSignedIn || !_isOnline) {
+      return;
+    }
+    _realtimeReconnectTimer?.cancel();
+    final delaySeconds = min(30, pow(2, _realtimeReconnectAttempt).toInt());
+    _realtimeReconnectAttempt = min(5, _realtimeReconnectAttempt + 1);
+    _realtimeReconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      _ensureRealtimeConnected();
+    });
+  }
+
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => const _PosConfirmDialog(
+        title: 'Keluar dari kasir?',
+        message:
+            'Pastikan transaksi selesai dan antrean offline sudah disinkronkan sebelum keluar.',
+        confirmLabel: 'Ya, keluar',
+        icon: Icons.logout,
+        danger: true,
+      ),
+    );
+    if (confirmed == true) {
+      await _logout();
+    }
+  }
+
+  void _handleRealtimeEvent(RealtimeEvent event) {
+    _realtimeReconnectAttempt = 0;
+    if (!_isRealtimeEventRelevant(event)) {
+      return;
+    }
+    _pendingRealtimeTopics.addAll(event.topics);
+    _realtimeRefreshTimer?.cancel();
+    _realtimeRefreshTimer = Timer(const Duration(milliseconds: 700), () {
+      unawaited(_refreshFromRealtime());
+    });
+  }
+
+  bool _isRealtimeEventRelevant(RealtimeEvent event) {
+    final outletId = event.outletId;
+    if (outletId == null || outletId.isEmpty) {
+      return true;
+    }
+    return outletId == _selectedOutlet?.id || outletId == _reportOutletId;
+  }
+
+  Future<void> _refreshFromRealtime() async {
+    if (_isRealtimeRefreshRunning || _pendingRealtimeTopics.isEmpty) {
+      return;
+    }
+    final topics = Set<String>.from(_pendingRealtimeTopics);
+    _pendingRealtimeTopics.clear();
+    _isRealtimeRefreshRunning = true;
+    _isApplyingRealtimeRefresh = true;
+    try {
+      final outlet = _selectedOutlet;
+      if (topics.any(
+        (topic) => {
+          'settings',
+          'promotions',
+          'masterData',
+          'customers',
+        }.contains(topic),
+      )) {
+        await _loadWorkspace(showErrors: false);
+      } else if (topics.any(
+        (topic) => {
+          'inventory',
+          'sales',
+          'shift',
+          'sync',
+          'waste',
+          'stockOpname',
+          'purchases',
+        }.contains(topic),
+      )) {
+        if (outlet != null) {
+          await _loadShiftAndCatalog(outlet);
+        }
+        await _loadSalesReport(showErrors: false);
+      }
+    } finally {
+      _isApplyingRealtimeRefresh = false;
+      _isRealtimeRefreshRunning = false;
+    }
+  }
+
   Future<void> _saveBaseUrl() async {
     final value = _baseUrlController.text.trim();
     if (value.isEmpty) {
@@ -1538,6 +1914,7 @@ class _PosShellState extends State<PosShell> {
   SaleQuote? get _currentQuote {
     return _cartCubit.currentQuote(
           outlet: _selectedOutlet,
+          customerId: _customerId,
           manualDiscount: _discount,
           manualTax: _manualTaxTotal,
           manualServiceCharge: _manualServiceChargeTotal,
@@ -1602,6 +1979,7 @@ class _PosShellState extends State<PosShell> {
     await _cartCubit.refreshSaleQuote(
       api: _api,
       outlet: _selectedOutlet,
+      customerId: _customerId,
       manualDiscount: _discount,
       manualTax: _manualTaxTotal,
       manualServiceCharge: _manualServiceChargeTotal,
@@ -1855,6 +2233,28 @@ class _PosShellState extends State<PosShell> {
   double get _cashTenderedTotal => _normalizedCartPayments
       .where((payment) => payment.method == 'cash')
       .fold(0, (sum, payment) => sum + payment.amount);
+  double get _receivableTotal =>
+      _normalizedCartPayments.any((payment) => payment.method == 'receivable')
+      ? max(
+          0,
+          _grandTotal -
+              _salePayments.fold(0.0, (sum, item) => sum + item.amount),
+        )
+      : 0;
+  bool get _hasReceivablePayment => _paymentMethods.contains('receivable');
+  List<SalesPayment> get _salePayments => _normalizedCartPayments
+      .where((payment) => payment.method != 'receivable')
+      .toList();
+  double get _nonCashOverpaid {
+    final nonCashTotal = _salePayments
+        .where(
+          (payment) =>
+              payment.method != 'cash' && payment.method != 'receivable',
+        )
+        .fold(0.0, (sum, payment) => sum + payment.amount);
+    return max(0, nonCashTotal - _grandTotal);
+  }
+
   int get _pendingSyncCount => _pendingSales.length + _pendingWastes.length;
 
   int get _pendingSyncForSelectedOutlet {
@@ -1989,7 +2389,6 @@ class _PosShellState extends State<PosShell> {
             title: _selectedTab == 0 ? 'Kasir' : 'Laporan Penjualan',
             outletName: _selectedOutlet?.name ?? 'Pilih outlet',
             shiftOpen: _activeShift != null,
-            expectedCash: _activeShift?.expectedCash,
           ),
           actions: [
             if (isPhone)
@@ -2006,6 +2405,11 @@ class _PosShellState extends State<PosShell> {
               ),
             ),
             IconButton(
+              tooltip: 'Outlet & Shift',
+              onPressed: _showShiftSheet,
+              icon: const Icon(Icons.account_balance_wallet_outlined),
+            ),
+            IconButton(
               tooltip: 'Profil',
               onPressed: _showProfileSheet,
               icon: const Icon(Icons.person_outline),
@@ -2017,7 +2421,8 @@ class _PosShellState extends State<PosShell> {
           children: [
             if (_isBusy || _isReportLoading)
               const LinearProgressIndicator(minHeight: 3),
-            if (_message.isNotEmpty) _MessageStrip(text: _message),
+            if (_activeShift != null)
+              _CashInfoBanner(expectedCash: _activeShift!.expectedCash),
             Expanded(
               child: Row(
                 children: [
@@ -2121,18 +2526,9 @@ class _PosShellState extends State<PosShell> {
       onCategoryChanged: (value) => setState(() => _selectedCategory = value),
       onSearchChanged: () => setState(() {}),
       onAdd: _addToCart,
+      apiBaseUrl: _api.baseUrl,
     );
     final cart = _buildCartPane();
-    final workspace = _WorkspaceBar(
-      outlets: _outlets,
-      selectedOutlet: _selectedOutlet,
-      activeShift: _activeShift,
-      openingCashController: _openingCashController,
-      actualCashController: _actualCashController,
-      onSelectOutlet: _selectOutlet,
-      onOpenShift: _isBusy ? null : _openShift,
-      onCloseShift: _isBusy ? null : _closeShift,
-    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -2147,13 +2543,7 @@ class _PosShellState extends State<PosShell> {
               children: [
                 Expanded(
                   flex: 7,
-                  child: Column(
-                    children: [
-                      workspace,
-                      const SizedBox(height: 10),
-                      Expanded(child: products),
-                    ],
-                  ),
+                  child: Column(children: [Expanded(child: products)]),
                 ),
                 const SizedBox(width: 12),
                 SizedBox(width: 420, child: cart),
@@ -2166,8 +2556,6 @@ class _PosShellState extends State<PosShell> {
           padding: EdgeInsets.fromLTRB(10, 10, 10, isTablet ? 10 : 96),
           child: Column(
             children: [
-              workspace,
-              const SizedBox(height: 10),
               Expanded(child: products),
               if (isTablet) ...[
                 const SizedBox(height: 10),
@@ -2249,6 +2637,7 @@ class _PosShellState extends State<PosShell> {
     return _SalesReportPane(
       report: _salesReport,
       details: _salesDetails,
+      shiftSummary: _shiftSummary,
       selectedRange: _reportRange,
       isLoading: _isReportLoading,
       outlets: _outlets,
@@ -2257,13 +2646,152 @@ class _PosShellState extends State<PosShell> {
       onRangeChanged: _changeReportRange,
       onOutletChanged: _changeReportOutlet,
       onRefresh: () => _loadSalesReport(),
+      onVoid: _voidSale,
+      onRefund: _refundSale,
       onReprint: (detail) => _printReceipt(
         ReceiptData.fromSalesDetail(
           detail,
           outletName: _selectedOutlet?.name ?? 'Outlet',
+          outletAddress: _selectedOutlet?.address ?? '',
         ),
       ),
     );
+  }
+
+  Future<void> _voidSale(SalesDetail detail) async {
+    final reason = await _requestSaleCorrectionReason(
+      title: 'Void transaksi',
+      confirmLabel: 'Void',
+    );
+    if (reason == null) return;
+    await _runBusy(() async {
+      await _api.voidSale(saleId: detail.id, reason: reason);
+      _showToast('Transaksi ${detail.receiptNumber} berhasil divoid.');
+      await _loadSalesReport(showErrors: false);
+      final outlet = _selectedOutlet;
+      if (outlet != null) await _loadShiftAndCatalog(outlet);
+    }, failurePrefix: 'Void transaksi gagal');
+  }
+
+  Future<void> _refundSale(SalesDetail detail) async {
+    final result = await _requestRefundInput();
+    if (result == null) return;
+    await _runBusy(() async {
+      await _api.refundSale(
+        saleId: detail.id,
+        reason: result.$1,
+        restock: result.$2,
+        refundMethod: result.$3,
+      );
+      _showToast('Transaksi ${detail.receiptNumber} berhasil direfund.');
+      await _loadSalesReport(showErrors: false);
+      final outlet = _selectedOutlet;
+      if (outlet != null) await _loadShiftAndCatalog(outlet);
+    }, failurePrefix: 'Refund transaksi gagal');
+  }
+
+  Future<String?> _requestSaleCorrectionReason({
+    required String title,
+    required String confirmLabel,
+  }) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 4,
+          decoration: const InputDecoration(labelText: 'Alasan'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.length < 3) return;
+              Navigator.pop(context, value);
+            },
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<(String, bool, String?)?> _requestRefundInput() async {
+    final controller = TextEditingController();
+    var restock = true;
+    var refundMethod = 'cash';
+    final result = await showDialog<(String, bool, String?)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Refund transaksi'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 3,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: 'Alasan'),
+              ),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                value: restock,
+                onChanged: (value) =>
+                    setDialogState(() => restock = value ?? true),
+                title: const Text('Kembalikan stok'),
+                contentPadding: EdgeInsets.zero,
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: refundMethod,
+                decoration: const InputDecoration(labelText: 'Metode refund'),
+                items: paymentLabels.entries
+                    .where((entry) => entry.key != 'receivable')
+                    .map(
+                      (entry) => DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() => refundMethod = value);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.length < 3) return;
+                Navigator.pop(context, (value, restock, refundMethod));
+              },
+              child: const Text('Refund'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return result;
   }
 
   Widget _buildPrinterSettingsCard({VoidCallback? afterChanged}) {
@@ -2461,7 +2989,7 @@ class _PosShellState extends State<PosShell> {
                 ),
                 onPressed: () {
                   Navigator.pop(context);
-                  _logout();
+                  unawaited(_confirmLogout());
                 },
                 icon: const Icon(Icons.logout),
                 label: const Text('Keluar'),
@@ -2469,6 +2997,98 @@ class _PosShellState extends State<PosShell> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showShiftSheet() {
+    if (_activeShift != null) {
+      unawaited(_refreshShiftSummary());
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final media = MediaQuery.of(context);
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                0,
+                12,
+                media.viewInsets.bottom + 16,
+              ),
+              child: Container(
+                constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
+                decoration: BoxDecoration(
+                  color: AppPalette.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppPalette.line),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppPalette.navy.withValues(alpha: 0.18),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(16),
+                child: SingleChildScrollView(
+                  child: _ShiftSheetContent(
+                    outlets: _outlets,
+                    selectedOutlet: _selectedOutlet,
+                    shift: _activeShift,
+                    summary: _shiftSummary,
+                    pendingVarianceShifts: _pendingVarianceShifts,
+                    openingCashController: _openingCashController,
+                    actualCashController: _actualCashController,
+                    cashMovementType: _cashMovementType,
+                    amountController: _cashMovementAmountController,
+                    reasonController: _cashMovementReasonController,
+                    noteController: _cashMovementNoteController,
+                    isBusy: _isBusy,
+                    onSelectOutlet: (value) async {
+                      await _selectOutlet(value);
+                      if (context.mounted) setSheetState(() {});
+                    },
+                    onOpenShift: _isBusy
+                        ? null
+                        : () async {
+                            await _openShift();
+                            if (context.mounted) setSheetState(() {});
+                          },
+                    onCloseShift: _isBusy
+                        ? null
+                        : () async {
+                            await _closeShift();
+                            if (context.mounted) setSheetState(() {});
+                          },
+                    onTypeChanged: (value) {
+                      setState(() => _cashMovementType = value);
+                      setSheetState(() {});
+                    },
+                    onSaveCashMovement: () async {
+                      await _saveCashMovement();
+                      if (context.mounted) setSheetState(() {});
+                    },
+                    onRefreshSummary: () async {
+                      await _refreshShiftSummary();
+                      await _loadPendingVarianceShifts(showErrors: false);
+                      if (context.mounted) setSheetState(() {});
+                    },
+                    onApproveVariance: (item) async {
+                      await _approveShiftVariance(item);
+                      if (context.mounted) setSheetState(() {});
+                    },
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -2576,26 +3196,53 @@ class _PosShellState extends State<PosShell> {
   void _showServerDialog() {
     showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Server API'),
-        content: TextField(
-          controller: _baseUrlController,
-          decoration: const InputDecoration(
-            labelText: 'Base URL',
-            prefixIcon: Icon(Icons.link),
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 430),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const _DialogTitle(
+                  title: 'Server API',
+                  subtitle: 'Ubah alamat backend untuk koneksi kasir mobile.',
+                  icon: Icons.dns_outlined,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _baseUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Base URL',
+                    prefixIcon: Icon(Icons.link),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Batal'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _saveBaseUrl,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Simpan'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          FilledButton.icon(
-            onPressed: _saveBaseUrl,
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Simpan'),
-          ),
-        ],
       ),
     );
   }

@@ -5,10 +5,11 @@ export default function PromotionsPage() {
   return (
     <>
       <AdminNav />
-      <section className="admin-content space-y-6 px-6 py-8">
+      <section className="admin-content space-y-4 px-4 py-4 sm:px-6 sm:py-6">
         <CashierBoundaryNotice />
         <PromotionsClient />
       </section>
     </>
   );
 }
+

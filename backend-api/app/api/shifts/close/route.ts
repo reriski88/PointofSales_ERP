@@ -2,7 +2,7 @@ import { shiftRepository } from "@/backend/repositories/shift-repository";
 import { writeAudit } from "@/lib/audit";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
 import { decimal, fixed } from "@/lib/number";
-import { requireActor, requireOutletAccess, requireRole } from "@/lib/rbac";
+import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
 import { publishRealtimeEvent } from "@/lib/realtime";
 import { closeShiftSchema } from "@/lib/validation";
 
@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet", "cashier"]);
+    await requirePermission(actor, "cashier", "edit");
     const body = await parseJson(request, closeShiftSchema);
 
     const [existing] = await shiftRepository.findById(body.shiftId, actor.organizationId);
@@ -36,25 +36,20 @@ export async function POST(request: Request) {
     const hasVariance = Math.abs(variance) >= 1;
     const isSupervisor = actor.role === "owner" || actor.role === "admin_outlet";
 
-    if (hasVariance && !isSupervisor) {
-      throw new ApiError(
-        "CONFLICT",
-        `Selisih kas ${fixed(variance)} membutuhkan approval supervisor/admin sebelum shift bisa ditutup.`,
-        409,
-      );
-    }
-
     if (hasVariance && !body.varianceReason?.trim()) {
-      throw new ApiError("BAD_REQUEST", "Alasan selisih kas wajib diisi untuk approval supervisor/admin.", 400);
+      throw new ApiError("BAD_REQUEST", "Alasan selisih kas wajib diisi.", 400);
     }
+    const closeApprovalStatus = hasVariance
+      ? isSupervisor ? "variance_approved" : "variance_pending"
+      : "normal";
 
     const [row] = await shiftRepository.close(body.shiftId, {
         status: "closed",
         actualCash: fixed(actualCash),
         cashVariance: fixed(variance),
-        closeApprovalStatus: hasVariance ? "variance_approved" : "normal",
+        closeApprovalStatus,
         closedByUserId: actor.id,
-        supervisorUserId: hasVariance ? actor.id : null,
+        supervisorUserId: closeApprovalStatus === "variance_approved" ? actor.id : null,
         varianceReason: hasVariance ? body.varianceReason?.trim() : null,
         closedAt: new Date(),
         note: body.note ?? existing.note,
@@ -76,7 +71,7 @@ export async function POST(request: Request) {
       organizationId: actor.organizationId,
       outletId: row.outletId,
       topics: ["shift", "dashboard"],
-      type: "shift.closed",
+      type: closeApprovalStatus === "variance_pending" ? "shift.close_pending" : "shift.closed",
       payload: {
         shiftId: row.id,
         cashVariance: row.cashVariance,

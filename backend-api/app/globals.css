@@ -1,25 +1,27 @@
+@import "driver.js/dist/driver.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: 105 50% 96%;
-  --foreground: 215 49% 23%;
+  --background: 220 33% 98%;
+  --foreground: 222 47% 11%;
   --card: 0 0% 100%;
-  --card-foreground: 215 49% 23%;
-  --primary: 203 39% 44%;
+  --card-foreground: 222 47% 11%;
+  --primary: 221 83% 53%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 182 43% 76%;
-  --secondary-foreground: 215 49% 23%;
-  --muted: 105 25% 91%;
-  --muted-foreground: 203 28% 38%;
-  --accent: 355 78% 56%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 221 83% 53%;
   --accent-foreground: 0 0% 100%;
   --destructive: 355 78% 56%;
   --destructive-foreground: 0 0% 100%;
-  --border: 182 24% 76%;
-  --input: 182 24% 76%;
-  --ring: 203 39% 44%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 221 83% 53%;
   --radius: 0.5rem;
 }
 
@@ -33,8 +35,88 @@ body {
   color: hsl(var(--foreground));
 }
 
+button svg {
+  flex-shrink: 0;
+}
+
 .admin-content {
   width: 100%;
+}
+
+.thin-x-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.thin-x-scroll > table,
+.thin-x-scroll > div[class*="min-w-"] {
+  width: 100%;
+}
+
+.thin-x-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.thin-x-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-x-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.28);
+}
+
+.thin-x-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.42);
+}
+
+.thin-y-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.thin-y-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thin-y-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-y-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.28);
+}
+
+.thin-y-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.42);
+}
+
+.pos-confirm-alert {
+  z-index: 120000 !important;
+}
+
+.driver-popover-description {
+  white-space: pre-line;
+  line-height: 1.55;
+}
+
+.driver-popover {
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.data-action-head,
+.data-action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 100%;
+}
+
+.data-action-head {
+  font-weight: 600;
 }
 
 @media (min-width: 1024px) {

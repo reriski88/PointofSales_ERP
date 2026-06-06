@@ -7,8 +7,8 @@ import "sweetalert2/dist/sweetalert2.min.css";
 import "./globals.css";
 
 export const metadata = {
-  title: "POS ERP API",
-  description: "Local-first POS ERP backend API",
+  title: "Smart POS ERP",
+  description: "Local-first Smart POS ERP",
 };
 
 export const viewport: Viewport = {

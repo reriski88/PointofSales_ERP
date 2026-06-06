@@ -11,7 +11,7 @@ const trustedOrigins = (process.env.TRUSTED_ORIGINS ?? "http://localhost:3000,po
   .filter(Boolean);
 
 export const auth = betterAuth({
-  appName: "POS ERP",
+  appName: "Smart POS ERP",
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins,

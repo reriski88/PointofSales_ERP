@@ -45,7 +45,7 @@ class _AppSectionState extends State<AppSection> {
     final showBody = !widget.collapsible || _isExpanded;
     final header = Container(
       color: AppPalette.white,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
       child: Row(
         children: [
           if (widget.icon != null) ...[
@@ -53,8 +53,11 @@ class _AppSectionState extends State<AppSection> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: widget.headerColor.withValues(alpha: 0.10),
+                color: widget.headerColor.withValues(alpha: 0.09),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: widget.headerColor.withValues(alpha: 0.16),
+                ),
               ),
               child: Icon(widget.icon, color: widget.headerColor, size: 20),
             ),
@@ -190,8 +193,9 @@ class SectionBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: AppPalette.aqua,
+        color: AppPalette.mist,
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppPalette.line),
       ),
       child: Text(
         text,

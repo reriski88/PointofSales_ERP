@@ -22,6 +22,8 @@ export async function POST(request: Request) {
       fromOutletId: body.fromOutletId,
       toOutletId: body.toOutletId,
       skuId: body.skuId,
+      targetSkuId: body.targetSkuId,
+      cloneToOutlet: body.cloneToOutlet,
       quantityBase: body.quantityBase,
       note: body.note,
       actorUserId: actor.id,
@@ -34,6 +36,9 @@ export async function POST(request: Request) {
     if ("error" in result && result.error === "INSUFFICIENT_STOCK") {
       throw new ApiError("BAD_REQUEST", "Stok outlet asal tidak mencukupi", 400);
     }
+    if ("error" in result && result.error === "TARGET_SKU_MISMATCH") {
+      throw new ApiError("BAD_REQUEST", "SKU tujuan bukan barang yang sama. Gunakan mode otomatis atau pilih SKU tujuan yang terhubung.", 400);
+    }
 
     await writeAudit({
       actor,
@@ -41,7 +46,7 @@ export async function POST(request: Request) {
       action: "inventory.transfer",
       entityType: "stock_movement",
       entityId: referenceId,
-      after: { ...body, referenceId },
+      after: { ...body, referenceId, targetSkuId: result.targetSku.id, clonedTarget: result.clonedTarget },
       request,
     });
 
@@ -50,14 +55,14 @@ export async function POST(request: Request) {
       outletId: body.fromOutletId,
       topics: ["inventory", "dashboard"],
       type: "inventory.transfer.out",
-      payload: { referenceId, skuId: body.skuId, toOutletId: body.toOutletId },
+      payload: { referenceId, skuId: body.skuId, sourceSkuId: body.skuId, targetSkuId: result.targetSku.id, toOutletId: body.toOutletId },
     });
     publishRealtimeEvent({
       organizationId: actor.organizationId,
       outletId: body.toOutletId,
       topics: ["inventory", "dashboard"],
       type: "inventory.transfer.in",
-      payload: { referenceId, skuId: body.skuId, fromOutletId: body.fromOutletId },
+      payload: { referenceId, skuId: result.targetSku.id, sourceSkuId: body.skuId, targetSkuId: result.targetSku.id, fromOutletId: body.fromOutletId },
     });
 
     return created({ referenceId, ...result });

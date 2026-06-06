@@ -2,6 +2,7 @@ import { hashPassword } from "better-auth/crypto";
 import { userRepository } from "@/backend/repositories/user-repository";
 import { writeAudit } from "@/lib/audit";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
+import { deleteReplacedImageObject } from "@/lib/local-image-storage";
 import { accessibleOutletIds, canManageRole, requireActor, requirePermission } from "@/lib/rbac";
 import { updateUserSchema } from "@/lib/validation";
 
@@ -18,6 +19,34 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     if (!existing) {
       throw new ApiError("NOT_FOUND", "User not found", 404);
+    }
+
+    if (id === actor.id) {
+      const updated = await userRepository.updateUserWithAccess(
+        id,
+        {
+          name: body.name ?? existing.name,
+          image: body.image !== undefined ? body.image : existing.image,
+          updatedAt: new Date(),
+        },
+        undefined,
+        null,
+        body.password ? await hashPassword(body.password) : undefined,
+      );
+
+      await writeAudit({
+        actor,
+        action: "user.self_update",
+        entityType: "user",
+        entityId: id,
+        before: existing,
+        after: updated,
+        request,
+      });
+
+      await deleteReplacedImageObject(existing.image, updated.image);
+
+      return ok(updated);
     }
 
     const targetRole = body.role ?? existing.role;
@@ -91,6 +120,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       },
       request,
     });
+
+    await deleteReplacedImageObject(existing.image, updated.image);
 
     return ok(updated);
   } catch (error) {

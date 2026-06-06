@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/http";
 import { decimal, fixed } from "@/lib/number";
 import { requireOutletAccess, type Actor } from "@/lib/rbac";
 import {
+  cancelPurchaseOrderSchema,
   createPurchaseOrderSchema,
   createPurchasePaymentSchema,
   receivePurchaseOrderSchema,
@@ -13,6 +14,7 @@ import {
 type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderSchema>;
 type ReceivePurchaseOrderInput = z.infer<typeof receivePurchaseOrderSchema>;
 type CreatePurchasePaymentInput = z.infer<typeof createPurchasePaymentSchema>;
+type CancelPurchaseOrderInput = z.infer<typeof cancelPurchaseOrderSchema>;
 
 function makePurchaseOrderNumber() {
   const now = new Date();
@@ -35,9 +37,12 @@ export async function createPurchaseOrder(actor: Actor, input: CreatePurchaseOrd
     const preparedItems = [];
     let subtotal = 0;
     for (const item of input.items) {
-      const [targetSku] = await purchaseRepository.findActiveSku(tx, item.skuId, actor.organizationId);
+      const [targetSku] = await purchaseRepository.findActiveSku(tx, item.skuId, actor.organizationId, input.outletId);
       if (!targetSku) {
         throw new ApiError("NOT_FOUND", `SKU ${item.skuId} tidak ditemukan`, 404);
+      }
+      if (!targetSku.trackInventory) {
+        throw new ApiError("BAD_REQUEST", `Produk non-stok ${targetSku.name} tidak bisa masuk pembelian stok`, 400);
       }
       const lineTotal = item.quantityBase * item.unitCost;
       subtotal += lineTotal;
@@ -204,6 +209,52 @@ export async function receivePurchaseOrder(
     });
 
     return { purchase: updatedPurchase, items };
+  });
+}
+
+export async function cancelPurchaseOrder(
+  actor: Actor,
+  purchaseOrderId: string,
+  input: CancelPurchaseOrderInput,
+  request?: Request,
+) {
+  return purchaseRepository.transaction(async (tx) => {
+    const [purchase] = await purchaseRepository.findPurchaseOrder(tx, purchaseOrderId, actor.organizationId);
+    if (!purchase) {
+      throw new ApiError("NOT_FOUND", "Pesanan pembelian tidak ditemukan", 404);
+    }
+    if (purchase.status !== "ordered") {
+      throw new ApiError("CONFLICT", "Hanya pesanan berstatus dipesan yang bisa dibatalkan", 409);
+    }
+    await requireOutletAccess(actor, purchase.outletId);
+
+    const payments = await purchaseRepository.findPurchasePayments(tx, purchase.id);
+    if (payments.length || decimal(purchase.paidTotal) > 0) {
+      throw new ApiError("CONFLICT", "Pesanan pembelian yang sudah dibayar tidak bisa dibatalkan", 409);
+    }
+
+    const cancellationNote = `Dibatalkan: ${input.reason}`;
+    const [updatedPurchase] = await purchaseRepository.updatePurchaseOrder(tx, purchase.id, {
+      status: "cancelled",
+      cancelledAt: new Date(),
+      note: purchase.note ? `${purchase.note}\n${cancellationNote}` : cancellationNote,
+      updatedAt: new Date(),
+    });
+
+    await purchaseRepository.createAuditLog(tx, {
+      organizationId: actor.organizationId,
+      outletId: purchase.outletId,
+      actorUserId: actor.id,
+      action: "purchase.cancel",
+      entityType: "purchase_order",
+      entityId: purchase.id,
+      before: purchase,
+      after: { purchase: updatedPurchase, reason: input.reason },
+      ipAddress: request?.headers.get("x-forwarded-for") ?? request?.headers.get("cf-connecting-ip"),
+      userAgent: request?.headers.get("user-agent"),
+    });
+
+    return { purchase: updatedPurchase };
   });
 }
 

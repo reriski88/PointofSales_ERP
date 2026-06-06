@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BarChart3, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { CashierBoundaryNotice } from "./_components/admin-nav";
-import { CollapsibleSection } from "./_components/collapsible-section";
 import { DashboardClient } from "./dashboard-client";
-import { DashboardModules } from "./dashboard-modules";
 import type { RoleAccessAction, RoleAccessMenuKey } from "@/lib/role-access";
 
 type CurrentAccessResponse = {
@@ -34,6 +32,7 @@ const routeOrder: Array<{ menuKey: RoleAccessMenuKey; href: string }> = [
 export function AdminHomeClient() {
   const [permissions, setPermissions] =
     useState<Record<RoleAccessMenuKey, RoleAccessAction[]> | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
   const canViewDashboard = permissions?.dashboard?.includes("view") ?? false;
 
   useEffect(() => {
@@ -58,6 +57,7 @@ export function AdminHomeClient() {
         const firstAllowedRoute = routeOrder.find((route) =>
           json.data.permissions[route.menuKey]?.includes("view"),
         );
+        setIsRedirecting(true);
         window.location.replace(firstAllowedRoute?.href ?? "/admin/profile");
       }
     }
@@ -72,24 +72,10 @@ export function AdminHomeClient() {
     return (
       <div className="flex min-h-40 items-center gap-3 rounded-lg border bg-card p-4 text-sm text-muted-foreground shadow-sm">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Memuat akses dashboard...
+        {isRedirecting ? "Mengalihkan ke modul yang diizinkan..." : "Memuat akses dashboard..."}
       </div>
     );
   }
 
-  return (
-    <>
-      <DashboardClient />
-      <CollapsibleSection
-        title="Modul POS Dasbor"
-        description="Akses cepat ke modul master data, stok, dan laporan."
-      >
-        <div className="flex items-center gap-3">
-          <BarChart3 className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Modul POS Dasbor</h2>
-        </div>
-        <DashboardModules />
-      </CollapsibleSection>
-    </>
-  );
+  return <DashboardClient />;
 }

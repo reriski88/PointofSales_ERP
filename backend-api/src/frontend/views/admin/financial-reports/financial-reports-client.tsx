@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState, type ComponentProps } from "react";
+import { BarChart3, BookOpenText, ChevronLeft, ChevronRight, Download, Landmark, LineChart, ListChecks, Search, Wallet } from "lucide-react";
 import { useLanguage, type AppLanguage } from "@/frontend/controllers/language-provider";
 import { allOutletsValue, useSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { useRolePermissions } from "../_components/use-role-permissions";
 import { useToast } from "../_components/toast-provider";
 import { getOutlets, getProfile } from "@/frontend/controllers/admin-data-cache";
@@ -60,6 +60,11 @@ type FinancialSummary = {
 type ReportTab = "profitLoss" | "balanceSheet" | "cashFlow" | "equityChanges" | "notes";
 
 const tabOrder: ReportTab[] = ["profitLoss", "balanceSheet", "cashFlow", "equityChanges", "notes"];
+type FinancialIconButtonProps = ComponentProps<typeof Button> & { compact?: boolean };
+
+function FinancialIconButton({ className, compact, ...props }: FinancialIconButtonProps) {
+  return <Button {...props} className={[compact ? "h-8 w-8" : "h-10 w-10", "shrink-0 p-0", className].filter(Boolean).join(" ")} />;
+}
 
 export function FinancialReportsClient() {
   const { language, t } = useLanguage();
@@ -70,6 +75,9 @@ export function FinancialReportsClient() {
   const [outletId, setOutletId] = useState("");
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [activeTab, setActiveTab] = useState<ReportTab>("profitLoss");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -197,91 +205,219 @@ export function FinancialReportsClient() {
     },
   });
 
-  const activeRows = report?.sheets[activeTab] ?? [];
+  const activeRows = useMemo(() => report?.sheets[activeTab] ?? [], [activeTab, report]);
+  const filteredRows = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) return activeRows;
+    return activeRows.filter(([label, value]) => `${label} ${value}`.toLowerCase().includes(keyword));
+  }, [activeRows, search]);
+  const pagedRows = pageItems(filteredRows, page, pageSize);
+
+  function selectTab(tab: ReportTab) {
+    setActiveTab(tab);
+    setSearch("");
+    setPage(1);
+  }
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div>
-            <CardTitle>{t("financialReports")}</CardTitle>
-            <CardDescription>{t("financialReportsDesc")}</CardDescription>
-          </div>
-          <div className="flex flex-col gap-3 md:flex-row md:items-end">
-            <Button type="button" variant="outline" onClick={() => void loadFinancialSummary()}>
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            <Button
+      <div className="thin-x-scroll overflow-x-auto border-b bg-card">
+        <div className="flex min-w-max gap-8 px-4">
+          {tabOrder.map((tab) => (
+            <FinancialTabButton key={tab} active={activeTab === tab} icon={tabIcon(tab)} onClick={() => selectTab(tab)}>
+              {report?.labels[tab] ?? tab}
+            </FinancialTabButton>
+          ))}
+        </div>
+      </div>
+
+      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="border-b px-5 py-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-semibold leading-snug text-foreground">{report?.labels[activeTab] ?? t("financialReports")}</h2>
+              <p className="mt-1 text-xs leading-4 text-muted-foreground">{t(`${activeTab}Desc`)}</p>
+            </div>
+            <FinancialIconButton
               type="button"
-              className="w-10 px-0"
+              className="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800"
+              variant="outline"
               onClick={exportActiveReport}
               disabled={isLoading || isExporting || access.isLoading}
               aria-label={t("exportSelectedReport")}
               title={t("exportSelectedReport")}
             >
               <Download className="h-4 w-4" />
-            </Button>
+            </FinancialIconButton>
           </div>
-        </CardHeader>
-        <CardContent>
-          {message ? <p className="text-sm text-destructive">{message}</p> : null}
+          {message ? <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{message}</p> : null}
           {isLoading ? (
-            <div className="rounded-lg border bg-muted/25 p-4 text-sm text-muted-foreground">
+            <div className="mt-3 rounded-lg border bg-muted/25 p-4 text-sm text-muted-foreground">
               {t("financialLoading")}
             </div>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+        <FinancialMetrics summary={summary} language={language} />
+        <div className="p-4">
+          <FinancialTableControls search={search} setSearch={setSearch} pageSize={pageSize} setPageSize={setPageSize} setPage={setPage} />
+          <FinancialTable rows={pagedRows} />
+          <FinancialPager page={page} pageSize={pageSize} total={filteredRows.length} setPage={setPage} />
+        </div>
+      </section>
+    </div>
+  );
+}
 
-      <div className="flex gap-2 overflow-x-auto rounded-lg border bg-card p-2">
-        {tabOrder.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className={`h-10 shrink-0 rounded-md px-4 text-sm font-medium transition-colors ${
-              activeTab === tab ? "bg-[#E63946] text-white shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {report?.labels[tab] ?? tab}
-          </button>
-        ))}
+function FinancialTabButton(props: {
+  active: boolean;
+  icon: React.ComponentType<{ className?: string }>;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const Icon = props.icon;
+  return (
+    <button
+      type="button"
+      className={`relative flex h-14 items-center gap-2 border-b-2 text-sm font-medium transition-colors ${
+        props.active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+      }`}
+      onClick={props.onClick}
+    >
+      <Icon className="h-4 w-4" />
+      {props.children}
+    </button>
+  );
+}
+
+function FinancialMetrics(props: { summary: FinancialSummary | null; language: AppLanguage }) {
+  const summary = props.summary;
+  const payments = summary?.payments.reduce((sum, item) => sum + moneyValue(item.amount), 0) ?? 0;
+  const metrics = [
+    { icon: BarChart3, label: "Net Sales", value: formatCurrencyByLanguage(summary?.sales.netSales ?? 0, props.language), tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    { icon: LineChart, label: "Laba Kotor", value: formatCurrencyByLanguage(summary?.sales.grossProfit ?? 0, props.language), tone: "bg-violet-50 text-violet-700 border-violet-200" },
+    { icon: Wallet, label: "Kas Masuk", value: formatCurrencyByLanguage(payments, props.language), tone: "bg-sky-50 text-sky-700 border-sky-200" },
+    { icon: Landmark, label: "Nilai Persediaan", value: formatCurrencyByLanguage(summary?.valuation.inventoryValue ?? 0, props.language), tone: "bg-amber-50 text-amber-700 border-amber-200" },
+  ];
+
+  return (
+    <div className="grid gap-3 border-b p-4 md:grid-cols-2 xl:grid-cols-4">
+      {metrics.map((item) => {
+        const Icon = item.icon;
+        return (
+          <div key={item.label} className="rounded-lg border bg-background p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-xs text-muted-foreground">{item.label}</p>
+                <p className="mt-1 truncate text-base font-semibold text-foreground">{item.value}</p>
+              </div>
+              <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${item.tone}`}>
+                <Icon className="h-4 w-4" />
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FinancialTableControls(props: {
+  search: string;
+  setSearch: (value: string) => void;
+  pageSize: number;
+  setPageSize: (value: number) => void;
+  setPage: (value: number) => void;
+}) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <span>Show</span>
+        <select className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" value={props.pageSize} onChange={(event) => { props.setPageSize(Number(event.target.value)); props.setPage(1); }}>
+          {[5, 10, 20, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <span>entries</span>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{report?.labels[activeTab] ?? t("financialReports")}</CardTitle>
-          <CardDescription>{t(`${activeTab}Desc`)}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FinancialTable rows={activeRows} />
-        </CardContent>
-      </Card>
+      <div className="relative md:w-80">
+        <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+        <Input className="h-11 rounded-lg pl-11" value={props.search} placeholder="Search..." onChange={(event) => { props.setSearch(event.target.value); props.setPage(1); }} />
+      </div>
     </div>
   );
 }
 
 function FinancialTable(props: { rows: Array<[string, string | number]> }) {
-  if (!props.rows.length) {
-    return <p className="text-sm text-muted-foreground">-</p>;
-  }
-
   return (
-    <div className="overflow-hidden rounded-lg border">
-      {props.rows.map(([label, value], index) => (
-        <div
-          key={`${label}-${index}`}
-          className={`grid gap-3 border-b px-4 py-3 text-sm last:border-b-0 sm:grid-cols-[1fr_220px] ${
-            index === props.rows.length - 1 ? "bg-muted/35 font-semibold" : "bg-background"
-          }`}
-        >
-          <span className="text-muted-foreground">{label}</span>
-          <span className="text-left font-medium sm:text-right">{value}</span>
-        </div>
-      ))}
+    <div className="thin-x-scroll overflow-x-auto rounded-xl border bg-card">
+      <table className="min-w-[760px] table-fixed border-collapse text-sm">
+        <colgroup>
+          <col className="w-[420px]" />
+          <col className="w-[220px]" />
+          <col className="w-[120px]" />
+        </colgroup>
+        <thead className="border-b bg-background text-xs font-semibold text-foreground">
+          <tr>
+            <th className="px-4 py-3 text-left">Item</th>
+            <th className="px-4 py-3 text-right">Nilai</th>
+            <th className="px-4 py-3 text-right">Aksi</th>
+          </tr>
+        </thead>
+        <tbody className="bg-background">
+          {props.rows.map(([label, value], index) => (
+            <tr key={`${label}-${index}`} className={`border-b text-sm last:border-b-0 ${index === props.rows.length - 1 ? "bg-muted/35 font-semibold" : ""}`}>
+              <td className="truncate px-4 py-3 align-middle text-muted-foreground">{label}</td>
+              <td className="truncate px-4 py-3 text-right align-middle font-medium text-foreground">{value}</td>
+              <td className="px-4 py-3 align-middle">
+                <div className="flex justify-end gap-1">
+                  <FinancialIconButton type="button" variant="outline" compact className="border-sky-200 text-sky-600 hover:bg-sky-50 hover:text-sky-700" title="Baris laporan" aria-label={`Baris laporan ${label}`}>
+                    <ListChecks className="h-4 w-4" />
+                  </FinancialIconButton>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {!props.rows.length ? <tr><td colSpan={3} className="px-4 py-6 text-sm text-muted-foreground">Data laporan tidak ditemukan.</td></tr> : null}
+        </tbody>
+      </table>
     </div>
   );
+}
+
+function FinancialPager(props: {
+  page: number;
+  pageSize: number;
+  total: number;
+  setPage: (value: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(props.total / props.pageSize));
+  const currentPage = Math.min(props.page, pageCount);
+  const start = props.total ? (currentPage - 1) * props.pageSize + 1 : 0;
+  const end = Math.min(currentPage * props.pageSize, props.total);
+  return (
+    <div className="flex flex-col gap-3 border-t px-4 py-4 md:flex-row md:items-center md:justify-between">
+      <p className="text-sm text-muted-foreground">Showing {start} to {end} of {props.total} entries</p>
+      <div className="flex items-center gap-3">
+        <FinancialIconButton type="button" variant="outline" disabled={currentPage <= 1} onClick={() => props.setPage(currentPage - 1)} aria-label="Sebelumnya"><ChevronLeft className="h-4 w-4" /></FinancialIconButton>
+        <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-lg bg-primary/10 px-3 text-sm font-semibold text-primary">{currentPage}</span>
+        <FinancialIconButton type="button" variant="outline" disabled={currentPage >= pageCount} onClick={() => props.setPage(currentPage + 1)} aria-label="Berikutnya"><ChevronRight className="h-4 w-4" /></FinancialIconButton>
+      </div>
+    </div>
+  );
+}
+
+function pageItems<T>(items: T[], page: number, pageSize: number) {
+  const start = Math.max(0, (page - 1) * pageSize);
+  return items.slice(start, start + pageSize);
+}
+
+function tabIcon(tab: ReportTab) {
+  const icons: Record<ReportTab, React.ComponentType<{ className?: string }>> = {
+    profitLoss: BarChart3,
+    balanceSheet: Landmark,
+    cashFlow: Wallet,
+    equityChanges: LineChart,
+    notes: BookOpenText,
+  };
+  return icons[tab];
 }
 
 type BuiltFinancialReport = {

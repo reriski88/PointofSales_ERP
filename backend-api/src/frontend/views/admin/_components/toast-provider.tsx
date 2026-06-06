@@ -84,6 +84,9 @@ export async function confirmAction(message: string) {
     focusCancel: true,
     confirmButtonColor: "#E63946",
     cancelButtonColor: "#457B9D",
+    customClass: {
+      container: "pos-confirm-alert",
+    },
   });
   return result.isConfirmed;
 }

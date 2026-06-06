@@ -13,6 +13,7 @@ export type Actor = {
   id: string;
   name: string;
   email: string;
+  image: string | null;
   role: AppRole;
   organizationId: string;
 };
@@ -56,6 +57,7 @@ export async function requireActor(request: Request): Promise<Actor> {
     id: actor.id,
     name: actor.name,
     email: actor.email,
+    image: actor.image,
     role: actor.role,
     organizationId: actor.organizationId,
   };
@@ -90,6 +92,18 @@ export async function requirePermission(
   action: RoleAccessAction,
 ) {
   if (!(await actorHasPermission(actor, menu, action))) {
+    throw new ApiError("FORBIDDEN", "Role permission is not allowed for this operation", 403);
+  }
+}
+
+export async function requireAnyPermission(
+  actor: Actor,
+  permissions: Array<{ menu: RoleAccessMenuKey; action: RoleAccessAction }>,
+) {
+  const allowed = await Promise.all(
+    permissions.map((permission) => actorHasPermission(actor, permission.menu, permission.action)),
+  );
+  if (!allowed.some(Boolean)) {
     throw new ApiError("FORBIDDEN", "Role permission is not allowed for this operation", 403);
   }
 }

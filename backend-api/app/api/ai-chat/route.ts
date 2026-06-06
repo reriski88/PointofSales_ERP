@@ -2,7 +2,7 @@ import { dashboardRepository } from "@/backend/repositories/dashboard-repository
 import { promotionRepository } from "@/backend/repositories/promotion-repository";
 import { reportRepository } from "@/backend/repositories/report-repository";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
-import { accessibleOutletIds, requireActor, requireRole } from "@/lib/rbac";
+import { accessibleOutletIds, requireActor, requirePermission } from "@/lib/rbac";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -28,7 +28,7 @@ type GeminiResponse = {
 export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
-    requireRole(actor, ["owner", "admin_outlet"]);
+    await requirePermission(actor, "dashboard", "view");
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -138,7 +138,7 @@ async function buildApplicationContext(
     scope: "Admin web POS ERP only. Flutter/mobile is out of scope.",
     appWorkflow: [
       "Dashboard menampilkan statistik outlet, produk/SKU, user, penjualan hari ini, grafik, produk terlaris, dan alert stok.",
-      "Kasir web memproses buka/tutup shift, keranjang, pembayaran, promo, donasi, pembulatan, sync offline, dan input remahan.",
+      "Kasir web memproses buka/tutup shift, keranjang, pembayaran, promo, donasi, pembulatan, dan input remahan. Sync offline dipakai kasir mobile.",
       "Master data mengelola outlet, produk/SKU, pelanggan, promo, inventory, transfer stok, stock opname, supplier, pembelian, user, role akses, dan layout struk.",
       "Laporan web mencakup penjualan, inventory, remahan, piutang/pelanggan, dan laporan finansial sesuai role akses.",
     ],

@@ -1,0 +1,162 @@
+Error: Failed query: insert into "unit" ("id", "organization_id", "name", "code", "kind", "to_base_factor", "is_active", "created_at", "updated_at") values (default, $1, $2, $3, $4, $5, default, default, default) returning "id", "organization_id", "name", "code", "kind", "to_base_factor", "is_active", "created_at", "updated_at"
+params: 69441da1-b32f-4dfc-9f8d-a260542343b9,Kemasan,PCS,package,1.000000
+    at async POST (app\api\units\route.ts:26:19)
+  24 |     await requirePermission(actor, "products", "create");
+  25 |     const body = await parseJson(request, createUnitSchema);
+> 26 |     const [row] = await unitRepository.create({
+     |                   ^
+  27 |         organizationId: actor.organizationId,
+  28 |         name: body.name.trim(),
+  29 |         code: body.code.trim().toUpperCase(), {
+  query: 'insert into "unit" ("id", "organization_id", "name", "code", "kind", "to_base_factor", "is_active", "created_at", "updated_at") values (default, $1, $2, $3, $4, $5, default, default, default) returning "id", "organization_id", "name", "code", "kind", "to_base_factor", "is_active", "created_at", "updated_at"',
+  params: [
+    '69441da1-b32f-4dfc-9f8d-a260542343b9',
+    'Kemasan',
+    'PCS',
+    'package',
+    '1.000000'
+  ],
+  [cause]: error: duplicate key value violates unique constraint "unit_org_code_idx"
+      at async POST (app\api\units\route.ts:26:19)
+    24 |     await requirePermission(actor, "products", "create");
+    25 |     const body = await parseJson(request, createUnitSchema);
+  > 26 |     const [row] = await unitRepository.create({
+       |                   ^
+    27 |         organizationId: actor.organizationId,
+    28 |         name: body.name.trim(),
+    29 |         code: body.code.trim().toUpperCase(), {
+    length: 252,
+    severity: 'ERROR',
+    code: '23505',
+    detail: 'Key (organization_id, code)=(69441da1-b32f-4dfc-9f8d-a260542343b9, PCS) already exists.',
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: 'public',
+    table: 'unit',
+    column: undefined,
+    dataType: undefined,
+    constraint: 'unit_org_code_idx',
+    file: 'nbtinsert.c',
+    line: '666',
+    routine: '_bt_check_unique'
+  }
+}
+[browser] Uncaught ReferenceError: LotCodeField is not defined
+    at InventoryClient (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/src_frontend_08k_fml._.js?id=%255Bproject%255D%252Fsrc%252Ffrontend%252Fviews%252Fadmin%252Finventory%252Finventory-client.tsx+%255Bapp-client%255D+%2528ecmascript%2529:3664:236)
+    at react_stack_bottom_frame (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:15037:24)
+    at renderWithHooks (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:4620:42)
+    at updateFunctionComponent (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:6081:21)
+    at beginWork (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:6691:24)
+    at runWithFiberInDEV (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:965:131)
+    at performUnitOfWork (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9555:97)
+    at workLoopSync (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9449:57)
+    at renderRootSync (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9433:13)
+    at performWorkOnRoot (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9061:186)
+    at performSyncWorkOnRoot (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:10263:26)
+    at flushSyncWorkAcrossRoots_impl (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:10179:316)
+    at processRootScheduleInMicrotask (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:10200:106)
+    at scheduleImmediateRootScheduleTask/< (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:10274:158)
+    at AdminInventoryPage (src\frontend\views\admin\inventory\page.tsx:10:9)
+   8 |       <section className="admin-content space-y-4 px-4 py-4 sm:px-6 sm:py-6">
+   9 |         <CashierBoundaryNotice />
+> 10 |         <InventoryClient />
+     |         ^
+  11 |       </section>
+  12 |     </main>
+  13 |   );
+2026-06-05T10:10:10.375Z ERROR [Better Auth]: Invalid origin: pos://mobile
+2026-06-05T10:33:54.680Z ERROR [Better Auth]: Invalid origin: pos://mobile
+2026-06-05T11:21:16.955Z ERROR [Better Auth]: Invalid origin: pos://mobile
+2026-06-05T11:44:06.857Z ERROR [Better Auth]: Invalid origin: pos://mobile
+⨯ ReferenceError: sql is not defined
+    at PgTable.<anonymous> (src\backend\database\schema.ts:629:44)
+    at <unknown> (src\backend\database\index.ts:17:26)
+  627 |     customerOrgCodeIdx: uniqueIndex("customer_org_code_idx").on(table.organizationId, tab...
+  628 |     customerOrgPhoneIdx: uniqueIndex("customer_org_phone_idx")
+> 629 |       .on(table.organizationId, table.phone)
+      |                                            ^
+  630 |       .where(sql`${table.phone} is not null and ${table.phone} <> ''`),
+  631 |   }),
+  632 | ); {
+  page: '/api/health'
+}
+2026-06-05T12:36:52.524Z ERROR [Better Auth]: Invalid origin: pos://mobile
+[browser] A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:
+
+- A server/client branch `if (typeof window !== 'undefined')`.
+- Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+- Date formatting in a user's locale which doesn't match the server.
+- External changing data without sending a snapshot of it along with the HTML.
+- Invalid HTML tag nesting.
+
+It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+
+https://react.dev/link/hydration-mismatch
+
+  ...
+    <RedirectBoundary>
+      <RedirectErrorBoundary router={{...}}>
+        <InnerLayoutRouter url="/admin/cus..." tree={[...]} params={{}} cacheNode={{rsc:{...}, ...}} segmentPath={[...]} ...>
+          <SegmentViewNode type="page" pagePath="admin/cust...">
+            <SegmentTrieNode>
+            <AdminCustomersPage>
+              <main className="min-h-scre...">
+                <AdminNav>
+                <section className="admin-cont...">
+                  <CashierBoundaryNotice>
+                  <CustomersClient>
+                    <div className="space-y-6">
+                      <section data-tour="section" className="overflow-h...">
+                        <div>
+                        <div className="p-4">
+                          <CustomerTableControls search="" setSearch={function bound dispatchSetState} statusFilter="all" ...>
+                            <div className="mb-4 flex ...">
+                              <div className="flex flex-...">
+                                <span>
+                                <select
+                                  className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline..."
+                                  value={10}
+                                  onChange={function onChange}
+-                                 data-sharkid="__0"
+                                >
+                                <span>
+                                <select
+                                  className="h-10 rounded-lg border bg-background px-3 text-sm text-foreground outline..."
+                                  value="all"
+                                  onChange={function onChange}
+-                                 data-sharkid="__1"
+                                >
+                              <div className="relative m...">
+                                <Search>
+                                <_c className="h-11 round..." value="" placeholder="Search..." ...>
+                                  <input
+                                    type={undefined}
+                                    className="flex w-full border bg-background px-3 py-2 text-sm outline-none transit..."
+                                    ref={null}
+                                    value=""
+                                    placeholder="Search..."
+                                    onChange={function onChange}
+-                                   data-sharkid="__2"
+                                  >
+                          ...
+                      ...
+          ...
+        ...
+ 
+    at runWithFiberInDEV (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:965:131)
+    at emitPendingHydrationWarnings (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:3438:30)
+    at completeWork (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:6885:102)
+    at runWithFiberInDEV (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:965:131)
+    at completeUnitOfWork (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9622:23)
+    at performUnitOfWork (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9557:28)
+    at workLoopConcurrentByScheduler (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9551:75)
+    at renderRootConcurrent (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9534:71)
+    at performWorkOnRoot (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:9061:150)
+    at performWorkOnRootViaSchedulerTask (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:10255:26)
+    at performWorkUntilDeadline (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_0rpq4pf._.js:2647:72) (file://D:/Kerja/2026/App Sendiri/POS Cemilan/App/backend-api/.next/dev/static/chunks/node_modules_next_dist_compiled_react-dom_058-ah~._.js:965:131)
+2026-06-05T13:40:33.460Z ERROR [Better Auth]: Invalid origin: pos://mobile
+2026-06-05T14:30:38.968Z ERROR [Better Auth]: Invalid origin: pos://mobile
+2026-06-05T15:19:27.435Z ERROR [Better Auth]: Invalid origin: pos://mobile

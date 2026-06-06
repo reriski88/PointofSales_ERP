@@ -19,6 +19,7 @@ class WorkspaceState {
     this.selectedOutlet,
     this.reportOutletId,
     this.activeShift,
+    this.shiftSummary,
   });
 
   factory WorkspaceState.initial() {
@@ -38,6 +39,7 @@ class WorkspaceState {
   final Outlet? selectedOutlet;
   final String? reportOutletId;
   final Shift? activeShift;
+  final ShiftSummary? shiftSummary;
   final List<CatalogItem> catalog;
   final List<PromotionRule> promotions;
   final bool canViewAllOutletReports;
@@ -54,6 +56,8 @@ class WorkspaceState {
     bool clearReportOutletId = false,
     Shift? activeShift,
     bool clearActiveShift = false,
+    ShiftSummary? shiftSummary,
+    bool clearShiftSummary = false,
     List<CatalogItem>? catalog,
     List<PromotionRule>? promotions,
     bool? canViewAllOutletReports,
@@ -71,6 +75,9 @@ class WorkspaceState {
           ? null
           : (reportOutletId ?? this.reportOutletId),
       activeShift: clearActiveShift ? null : (activeShift ?? this.activeShift),
+      shiftSummary: clearShiftSummary
+          ? null
+          : (shiftSummary ?? this.shiftSummary),
       catalog: catalog ?? this.catalog,
       promotions: promotions ?? this.promotions,
       canViewAllOutletReports:
@@ -118,6 +125,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
         selectedOutlet: selectedOutlet,
         reportOutletId: selectedOutletId,
         activeShift: cachedShift == null ? null : Shift.fromJson(cachedShift),
+        clearShiftSummary: true,
         catalog: cachedCatalog.map(CatalogItem.fromJson).toList(),
         promotions: cachedPromotions.map(PromotionRule.fromJson).toList(),
         receiptLayout: ReceiptLayout.fromCache(
@@ -205,6 +213,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
             ? outlet.id
             : state.reportOutletId,
         clearActiveShift: true,
+        clearShiftSummary: true,
         message: '',
       ),
     );
@@ -215,6 +224,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
       state.copyWith(
         activeShift: cachedShift == null ? null : Shift.fromJson(cachedShift),
         clearActiveShift: cachedShift == null,
+        clearShiftSummary: true,
         catalog: cachedCatalog.map(CatalogItem.fromJson).toList(),
       ),
     );
@@ -236,9 +246,19 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
       final shift = results[0] as Shift?;
       final catalog = results[1] as List<CatalogItem>;
       final promotions = results[2] as List<PromotionRule>;
+      ShiftSummary? summary;
+      if (shift != null) {
+        try {
+          summary = await api.fetchShiftSummary(shift.id);
+        } catch (_) {
+          summary = null;
+        }
+      }
       emit(
         state.copyWith(
           activeShift: shift,
+          shiftSummary: summary,
+          clearShiftSummary: summary == null,
           catalog: catalog,
           promotions: promotions,
           isOnline: true,
@@ -268,7 +288,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
   }) async {
     final catalog = state.catalog
         .map(
-          (item) => item.skuId == skuId
+          (item) => item.skuId == skuId && item.trackInventory
               ? item.copyWith(
                   onHandBaseQty: (item.onHandBaseQty - quantityBase).clamp(
                     0,
@@ -294,9 +314,11 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     emit(state.copyWith(message: ''));
     try {
       final shift = await api.openShift(outlet.id, openingCash);
+      final summary = await api.fetchShiftSummary(shift.id);
       emit(
         state.copyWith(
           activeShift: shift,
+          shiftSummary: summary,
           isOnline: true,
           message: 'Shift dibuka.',
         ),
@@ -316,6 +338,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     required PosApi api,
     required SharedPreferences? prefs,
     required double actualCash,
+    String? varianceReason,
   }) async {
     final shift = state.activeShift;
     if (shift == null) {
@@ -323,14 +346,22 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     }
     emit(state.copyWith(message: ''));
     try {
-      final closed = await api.closeShift(shift.id, actualCash);
+      final closed = await api.closeShift(
+        shift.id,
+        actualCash,
+        varianceReason: varianceReason,
+      );
       final outletId = state.selectedOutlet?.id;
+      final pendingApproval = closed.closeApprovalStatus == 'variance_pending';
       emit(
         state.copyWith(
           activeShift: closed.status == 'open' ? closed : null,
           clearActiveShift: closed.status != 'open',
+          clearShiftSummary: closed.status != 'open',
           isOnline: true,
-          message: 'Shift ditutup.',
+          message: pendingApproval
+              ? 'Shift ditutup dan menunggu approval selisih kas.'
+              : 'Shift ditutup.',
         ),
       );
       if (outletId != null && closed.status != 'open') {
@@ -347,7 +378,106 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
   }
 
   void clearSession() {
-    emit(state.copyWith(clearActiveShift: true, message: ''));
+    emit(
+      state.copyWith(
+        clearActiveShift: true,
+        clearShiftSummary: true,
+        message: '',
+      ),
+    );
+  }
+
+  Future<void> loadShiftSummary({required PosApi api}) async {
+    final shift = state.activeShift;
+    if (shift == null) {
+      emit(state.copyWith(clearShiftSummary: true));
+      return;
+    }
+    try {
+      final summary = await api.fetchShiftSummary(shift.id);
+      emit(state.copyWith(shiftSummary: summary, isOnline: true));
+    } catch (error) {
+      emit(
+        state.copyWith(
+          isOnline: _serverReachableAfter(error),
+          message: 'Ringkasan shift gagal dimuat. ${readableApiError(error)}',
+        ),
+      );
+    }
+  }
+
+  Future<void> createCashMovement({
+    required PosApi api,
+    required double amount,
+    required String type,
+    required String reason,
+    String? note,
+  }) async {
+    final shift = state.activeShift;
+    if (shift == null) {
+      emit(
+        state.copyWith(
+          message: 'Buka shift sebelum mencatat kas masuk/keluar.',
+        ),
+      );
+      return;
+    }
+    if (amount <= 0) {
+      emit(
+        state.copyWith(message: 'Nominal kas masuk/keluar wajib lebih dari 0.'),
+      );
+      return;
+    }
+    if (reason.trim().length < 3) {
+      emit(
+        state.copyWith(message: 'Alasan kas masuk/keluar minimal 3 karakter.'),
+      );
+      return;
+    }
+    try {
+      await api.createCashMovement(
+        shiftId: shift.id,
+        type: type,
+        amount: amount,
+        reason: reason.trim(),
+        note: note,
+      );
+      final summary = await api.fetchShiftSummary(shift.id);
+      emit(
+        state.copyWith(
+          shiftSummary: summary,
+          activeShift: summary.shift,
+          isOnline: true,
+          message: type == 'cash_out'
+              ? 'Kas keluar dicatat.'
+              : 'Kas masuk dicatat.',
+        ),
+      );
+    } catch (error) {
+      emit(
+        state.copyWith(
+          isOnline: _serverReachableAfter(error),
+          message: 'Mutasi kas gagal. ${readableApiError(error)}',
+        ),
+      );
+    }
+  }
+
+  Future<void> clearActiveShiftCache({
+    required SharedPreferences? prefs,
+  }) async {
+    final outletId = state.selectedOutlet?.id;
+    emit(
+      state.copyWith(
+        clearActiveShift: true,
+        clearShiftSummary: true,
+        message:
+            'Shift lokal sudah tidak aktif. Buka shift baru sebelum transaksi.',
+      ),
+    );
+    if (outletId != null) {
+      await _saveActiveShift(prefs, outletId, null);
+    }
   }
 
   Future<bool> _canFetchAllOutletReport(

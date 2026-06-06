@@ -4,7 +4,11 @@ import * as schema from "./schema";
 
 const { Pool } = pg;
 
-const connectionString = process.env.DATABASE_URL ?? "postgres://pos_cemilan:pos_cemilan@localhost:5432/pos_cemilan";
+const rawConnectionString = process.env.DATABASE_URL ?? "postgres://pos_cemilan:pos_cemilan@localhost:5432/pos_cemilan";
+const connectionString =
+  /\bsslmode=(prefer|require|verify-ca)\b/.test(rawConnectionString) && !/\buselibpqcompat=true\b/.test(rawConnectionString)
+    ? `${rawConnectionString}${rawConnectionString.includes("?") ? "&" : "?"}uselibpqcompat=true`
+    : rawConnectionString;
 
 export const pool = new Pool({
   connectionString,

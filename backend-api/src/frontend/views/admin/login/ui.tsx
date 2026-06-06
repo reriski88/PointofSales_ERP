@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "../_components/searchable-select";
-import { allOutletsValue, saveSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
+import { allOutletsValue, clearSelectedOutlet, saveSelectedOutlet } from "@/frontend/controllers/selected-outlet-provider";
 import type { RoleAccessAction, RoleAccessMenuKey } from "@/lib/role-access";
 
 type CurrentAccessResponse = {
@@ -19,6 +19,12 @@ type CurrentAccessResponse = {
 type Outlet = { id: string; name: string; code: string };
 type Profile = { role: string };
 type ApiResponse<T> = { data: T };
+type OutletSelection = {
+  options: Array<{ value: string; label: string }>;
+  defaultOutletId: string;
+  requiresFirstRunSetup: boolean;
+  requiresOutletAssignment: boolean;
+};
 
 const routeOrder: Array<{ menuKey: RoleAccessMenuKey; href: string }> = [
   { menuKey: "dashboard", href: "/admin" },
@@ -57,14 +63,18 @@ export function AdminLoginForm() {
     setIsLoading(true);
     setMessage(null);
 
+    const formData = new FormData(event.currentTarget);
+    const nextEmail = String(formData.get("email") ?? "").trim();
+    const nextPassword = String(formData.get("password") ?? "");
+
     const response = await fetch("/api/auth/sign-in/email", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        email,
-        password,
+        email: nextEmail,
+        password: nextPassword,
       }),
     });
 
@@ -82,7 +92,21 @@ export function AdminLoginForm() {
     setOutletOptions(outletSelection.options);
     setSelectedOutletId(outletSelection.defaultOutletId);
     setIsLoading(false);
+    if (outletSelection.requiresFirstRunSetup) {
+      clearSelectedOutlet();
+      window.location.href = "/admin/outlets?setup=first-run";
+      return;
+    }
+    if (outletSelection.requiresOutletAssignment) {
+      clearSelectedOutlet();
+      window.location.href = "/admin/profile?notice=no-outlet";
+      return;
+    }
     if (outletSelection.options.length <= 1) {
+      if (!outletSelection.defaultOutletId) {
+        window.location.href = nextRoute;
+        return;
+      }
       saveSelectedOutlet(outletSelection.defaultOutletId);
       window.location.href = nextRoute;
     }
@@ -162,11 +186,12 @@ export function AdminLoginForm() {
                 <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
+                  name="email"
                   className="h-11 border-[#DDE7DF] focus-visible:ring-[#457B9D]"
                   autoComplete="email"
                   data-form-type="email"
                   data-lpignore="true"
-                  // value={email}
+                  value={email}
                   onChange={(event) => setEmail(event.target.value)}
                 />
               </div>
@@ -175,6 +200,7 @@ export function AdminLoginForm() {
                 <div className="relative">
                   <Input
                     id="password"
+                    name="password"
                     type={isPasswordVisible ? "text" : "password"}
                     className="h-11 border-[#DDE7DF] pr-10 focus-visible:ring-[#457B9D]"
                     autoComplete="current-password"
@@ -237,19 +263,25 @@ function LoginFormSkeleton() {
   );
 }
 
-async function loadOutletSelection() {
+async function loadOutletSelection(): Promise<OutletSelection> {
   const [profileResponse, outletsResponse] = await Promise.all([
     fetch("/api/profile"),
     fetch("/api/outlets"),
   ]);
   if (!profileResponse.ok || !outletsResponse.ok) {
-    return { options: [], defaultOutletId: "" };
+    return { options: [], defaultOutletId: "", requiresFirstRunSetup: false, requiresOutletAssignment: false };
   }
   const profileJson = (await profileResponse.json()) as ApiResponse<Profile>;
   const outletsJson = (await outletsResponse.json()) as ApiResponse<Outlet[]>;
   const canSelectAll = ["owner", "auditor"].includes(profileJson.data.role);
+  const requiresFirstRunSetup =
+    profileJson.data.role === "owner" && outletsJson.data.length === 0;
+  const requiresOutletAssignment =
+    profileJson.data.role !== "owner" && outletsJson.data.length === 0;
   const options = [
-    ...(canSelectAll ? [{ value: allOutletsValue, label: "Semua Outlet" }] : []),
+    ...(canSelectAll && outletsJson.data.length > 0
+      ? [{ value: allOutletsValue, label: "Semua Outlet" }]
+      : []),
     ...outletsJson.data.map((outlet) => ({
       value: outlet.id,
       label: `${outlet.name} (${outlet.code})`,
@@ -258,6 +290,8 @@ async function loadOutletSelection() {
   return {
     options,
     defaultOutletId: options[0]?.value ?? "",
+    requiresFirstRunSetup,
+    requiresOutletAssignment,
   };
 }
 

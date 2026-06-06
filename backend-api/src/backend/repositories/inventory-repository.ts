@@ -1,6 +1,7 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, lte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { inventoryBalance, inventoryBatch, outlet, sku, stockMovement, stockOpname, stockOpnameItem, unit } from "@/db/schema";
+import { inventoryBalance, inventoryBatch, outlet, product, sku, stockMovement, stockOpname, stockOpnameItem, unit } from "@/db/schema";
+import { ApiError } from "@/lib/http";
 import { decimal, fixed } from "@/lib/number";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -105,6 +106,104 @@ export const inventoryRepository = {
       .limit(500);
   },
 
+  findBatchGaps(organizationId: string, outletId: string) {
+    const batchTotal = sql`coalesce((
+      select sum(${inventoryBatch.onHandBaseQty})
+      from ${inventoryBatch}
+      where ${inventoryBatch.organizationId} = ${organizationId}
+        and ${inventoryBatch.outletId} = ${inventoryBalance.outletId}
+        and ${inventoryBatch.skuId} = ${inventoryBalance.skuId}
+    ), 0)`;
+    const batchTotalText = sql<string>`(${batchTotal})::text`;
+    const gapQty = sql<string>`(${inventoryBalance.onHandBaseQty} - ${batchTotal})::text`;
+
+    return db
+      .select({
+        outletId: inventoryBalance.outletId,
+        skuId: inventoryBalance.skuId,
+        skuCode: sku.sku,
+        skuName: sku.name,
+        onHandBaseQty: inventoryBalance.onHandBaseQty,
+        batchOnHandBaseQty: batchTotalText,
+        gapBaseQty: gapQty,
+        unitId: sku.baseUnitId,
+        unitCode: unit.code,
+        cost: sku.cost,
+      })
+      .from(inventoryBalance)
+      .innerJoin(sku, eq(sku.id, inventoryBalance.skuId))
+      .innerJoin(product, eq(product.id, sku.productId))
+      .innerJoin(unit, eq(unit.id, sku.baseUnitId))
+      .where(and(
+        eq(inventoryBalance.outletId, outletId),
+        eq(sku.organizationId, organizationId),
+        eq(product.organizationId, organizationId),
+        sql`${inventoryBalance.onHandBaseQty} > ${batchTotal}`,
+      ))
+      .orderBy(sku.sku);
+  },
+
+  reconcileBatchGap(input: {
+    organizationId: string;
+    outletId: string;
+    skuId: string;
+    actorUserId: string;
+  }) {
+    return db.transaction(async (tx) => {
+      const [gap] = await tx
+        .select({
+          outletId: inventoryBalance.outletId,
+          skuId: inventoryBalance.skuId,
+          skuCode: sku.sku,
+          skuName: sku.name,
+          onHandBaseQty: inventoryBalance.onHandBaseQty,
+          batchOnHandBaseQty: sql<string>`coalesce(sum(${inventoryBatch.onHandBaseQty}), 0)::text`,
+          unitCost: sku.cost,
+        })
+        .from(inventoryBalance)
+        .innerJoin(sku, eq(sku.id, inventoryBalance.skuId))
+        .innerJoin(product, eq(product.id, sku.productId))
+        .leftJoin(inventoryBatch, and(
+          eq(inventoryBatch.organizationId, input.organizationId),
+          eq(inventoryBatch.outletId, inventoryBalance.outletId),
+          eq(inventoryBatch.skuId, inventoryBalance.skuId),
+        ))
+        .where(and(
+          eq(inventoryBalance.outletId, input.outletId),
+          eq(inventoryBalance.skuId, input.skuId),
+          eq(sku.organizationId, input.organizationId),
+          eq(product.organizationId, input.organizationId),
+        ))
+        .groupBy(inventoryBalance.outletId, inventoryBalance.skuId, inventoryBalance.onHandBaseQty, sku.id)
+        .limit(1);
+
+      if (!gap) return null;
+      const gapQty = decimal(gap.onHandBaseQty) - decimal(gap.batchOnHandBaseQty);
+      if (gapQty <= 0.0005) {
+        return { error: "NO_GAP" as const, gap };
+      }
+
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const [batch] = await tx
+        .insert(inventoryBatch)
+        .values({
+          organizationId: input.organizationId,
+          outletId: input.outletId,
+          skuId: input.skuId,
+          lotCode: `NON-LOT-${today}`,
+          initialBaseQty: fixed(gapQty, 3),
+          onHandBaseQty: fixed(gapQty, 3),
+          unitCost: gap.unitCost,
+          sourceType: "batch_reconciliation",
+          sourceId: input.actorUserId,
+          note: "Rekonsiliasi batch dari selisih inventory balance",
+        })
+        .returning();
+
+      return { batch, gapBaseQty: fixed(gapQty, 3), skuCode: gap.skuCode, skuName: gap.skuName };
+    });
+  },
+
   listStockOpnames(organizationId: string, outletId: string) {
     return db
       .select({
@@ -117,26 +216,24 @@ export const inventoryRepository = {
         submittedAt: stockOpname.submittedAt,
         approvedAt: stockOpname.approvedAt,
         postedAt: stockOpname.postedAt,
-        itemCount: sql<number>`(
-          select count(*)::int
-          from ${stockOpnameItem}
-          where ${stockOpnameItem.stockOpnameId} = ${stockOpname.id}
-        )`,
-        countedCount: sql<number>`(
-          select count(*)::int
-          from ${stockOpnameItem}
-          where ${stockOpnameItem.stockOpnameId} = ${stockOpname.id}
-            and ${stockOpnameItem.physicalBaseQty} is not null
-        )`,
-        differenceCount: sql<number>`(
-          select count(*)::int
-          from ${stockOpnameItem}
-          where ${stockOpnameItem.stockOpnameId} = ${stockOpname.id}
-            and coalesce(${stockOpnameItem.differenceBaseQty}, 0) <> 0
-        )`,
+        itemCount: sql<number>`count(${stockOpnameItem.id})::int`,
+        countedCount: sql<number>`count(${stockOpnameItem.physicalBaseQty})::int`,
+        differenceCount: sql<number>`sum(case when abs(coalesce(${stockOpnameItem.differenceBaseQty}, 0)) >= 0.0005 then 1 else 0 end)::int`,
       })
       .from(stockOpname)
+      .leftJoin(stockOpnameItem, eq(stockOpnameItem.stockOpnameId, stockOpname.id))
       .where(and(eq(stockOpname.organizationId, organizationId), eq(stockOpname.outletId, outletId)))
+      .groupBy(
+        stockOpname.id,
+        stockOpname.outletId,
+        stockOpname.code,
+        stockOpname.status,
+        stockOpname.note,
+        stockOpname.createdAt,
+        stockOpname.submittedAt,
+        stockOpname.approvedAt,
+        stockOpname.postedAt,
+      )
       .orderBy(desc(stockOpname.createdAt))
       .limit(50);
   },
@@ -434,29 +531,57 @@ export const inventoryRepository = {
   }) {
     return db.transaction(async (tx) => {
       const [targetSku] = await tx
-        .select()
+        .select({ ...getTableColumns(sku) })
         .from(sku)
-        .where(and(eq(sku.id, input.skuId), eq(sku.organizationId, input.organizationId), eq(sku.isActive, true)))
+        .innerJoin(product, eq(product.id, sku.productId))
+        .where(and(
+          eq(sku.id, input.skuId),
+          eq(sku.organizationId, input.organizationId),
+          eq(sku.isActive, true),
+          eq(product.organizationId, input.organizationId),
+          eq(product.outletId, input.outletId),
+          eq(product.isActive, true),
+        ))
         .limit(1);
 
       if (!targetSku) {
         return null;
       }
 
-      await tx
-        .insert(inventoryBalance)
-        .values({
-          outletId: input.outletId,
-          skuId: input.skuId,
-          onHandBaseQty: fixed(input.quantityBase, 3),
-        })
-        .onConflictDoUpdate({
-          target: [inventoryBalance.outletId, inventoryBalance.skuId],
-          set: {
-            onHandBaseQty: sql`${inventoryBalance.onHandBaseQty} + ${fixed(input.quantityBase, 3)}`,
+      if (input.quantityBase < 0) {
+        const deductedQuantity = Math.abs(input.quantityBase);
+        const decremented = await tx
+          .update(inventoryBalance)
+          .set({
+            onHandBaseQty: sql`${inventoryBalance.onHandBaseQty} - ${fixed(deductedQuantity, 3)}`,
             updatedAt: new Date(),
-          },
-        });
+          })
+          .where(and(
+            eq(inventoryBalance.outletId, input.outletId),
+            eq(inventoryBalance.skuId, input.skuId),
+            sql`${inventoryBalance.onHandBaseQty} - ${inventoryBalance.reservedBaseQty} - ${inventoryBalance.holdBaseQty} >= ${fixed(deductedQuantity, 3)}`,
+          ))
+          .returning({ skuId: inventoryBalance.skuId });
+
+        if (!decremented.length) {
+          return { error: "INSUFFICIENT_STOCK" as const };
+        }
+      } else {
+        await tx
+          .insert(inventoryBalance)
+          .values({
+            outletId: input.outletId,
+            skuId: input.skuId,
+            onHandBaseQty: fixed(input.quantityBase, 3),
+          })
+          .onConflictDoUpdate({
+            target: [inventoryBalance.outletId, inventoryBalance.skuId],
+            set: {
+              onHandBaseQty: sql`${inventoryBalance.onHandBaseQty} + ${fixed(input.quantityBase, 3)}`,
+              updatedAt: new Date(),
+            },
+          });
+      }
 
       let batchId: string | undefined;
       if (input.quantityBase > 0 && (input.lotCode || input.expiryDate)) {
@@ -506,6 +631,9 @@ export const inventoryRepository = {
             .where(eq(inventoryBatch.id, batch.id));
           remaining -= deducted;
         }
+        if (remaining > 0.000001) {
+          throw new ApiError("BAD_REQUEST", "Batch stok tidak mencukupi", 400);
+        }
       }
 
       const [movement] = await tx
@@ -534,6 +662,8 @@ export const inventoryRepository = {
     fromOutletId: string;
     toOutletId: string;
     skuId: string;
+    targetSkuId?: string | null;
+    cloneToOutlet?: boolean;
     quantityBase: number;
     note?: string;
     actorUserId: string;
@@ -550,14 +680,132 @@ export const inventoryRepository = {
         .from(outlet)
         .where(and(eq(outlet.id, input.toOutletId), eq(outlet.organizationId, input.organizationId), eq(outlet.isActive, true)))
         .limit(1);
-      const [targetSku] = await tx
-        .select()
+      const [sourceRow] = await tx
+        .select({
+          sku,
+          product,
+        })
         .from(sku)
-        .where(and(eq(sku.id, input.skuId), eq(sku.organizationId, input.organizationId), eq(sku.isActive, true)))
+        .innerJoin(product, eq(product.id, sku.productId))
+        .where(and(
+          eq(sku.id, input.skuId),
+          eq(sku.organizationId, input.organizationId),
+          eq(sku.isActive, true),
+          eq(product.organizationId, input.organizationId),
+          eq(product.outletId, input.fromOutletId),
+          eq(product.isActive, true),
+        ))
         .limit(1);
 
-      if (!fromOutlet || !toOutlet || !targetSku) {
+      if (!fromOutlet || !toOutlet || !sourceRow) {
         return null;
+      }
+
+      const sourceSku = sourceRow.sku;
+      const sourceProduct = sourceRow.product;
+      const sourceGlobalProductId = sourceProduct.globalProductId ?? sourceProduct.id;
+      const sourceGlobalSkuId = sourceSku.globalSkuId ?? sourceSku.id;
+      let targetSku = null as typeof sku.$inferSelect | null;
+      let clonedTarget = false;
+
+      if (input.targetSkuId) {
+        const [targetRow] = await tx
+          .select({ sku, product })
+          .from(sku)
+          .innerJoin(product, eq(product.id, sku.productId))
+          .where(and(
+            eq(sku.id, input.targetSkuId),
+            eq(sku.organizationId, input.organizationId),
+            eq(sku.isActive, true),
+            eq(product.organizationId, input.organizationId),
+            eq(product.outletId, input.toOutletId),
+            eq(product.isActive, true),
+          ))
+          .limit(1);
+        targetSku = targetRow?.sku ?? null;
+        if (!targetSku) return null;
+        const targetGlobalProductId = targetRow.product.globalProductId ?? targetRow.product.id;
+        const targetGlobalSkuId = targetSku.globalSkuId ?? targetSku.id;
+        if (targetGlobalProductId !== sourceGlobalProductId || targetGlobalSkuId !== sourceGlobalSkuId) {
+          return { error: "TARGET_SKU_MISMATCH" as const };
+        }
+      } else {
+        const [matchedTarget] = await tx
+          .select({ sku, product })
+          .from(sku)
+          .innerJoin(product, eq(product.id, sku.productId))
+          .where(and(
+            eq(product.organizationId, input.organizationId),
+            eq(product.outletId, input.toOutletId),
+            eq(sku.isActive, true),
+            eq(product.isActive, true),
+            or(
+              and(eq(product.globalProductId, sourceGlobalProductId), eq(sku.globalSkuId, sourceGlobalSkuId)),
+              and(
+                eq(product.name, sourceProduct.name),
+                eq(sku.sku, sourceSku.sku),
+                eq(sku.name, sourceSku.name),
+                eq(sku.baseUnitId, sourceSku.baseUnitId),
+                eq(sku.saleUnitId, sourceSku.saleUnitId),
+              ),
+            ),
+          ))
+          .limit(1);
+        targetSku = matchedTarget?.sku ?? null;
+        if (matchedTarget) {
+          if (matchedTarget.product.globalProductId !== sourceGlobalProductId) {
+            await tx
+              .update(product)
+              .set({ globalProductId: sourceGlobalProductId, updatedAt: new Date() })
+              .where(eq(product.id, matchedTarget.product.id));
+          }
+          if (matchedTarget.sku.globalSkuId !== sourceGlobalSkuId) {
+            const [linkedSku] = await tx
+              .update(sku)
+              .set({ globalSkuId: sourceGlobalSkuId, updatedAt: new Date() })
+              .where(eq(sku.id, matchedTarget.sku.id))
+              .returning();
+            targetSku = linkedSku;
+          }
+        }
+
+        if (!targetSku) {
+          const [createdProduct] = await tx
+            .insert(product)
+            .values({
+              organizationId: input.organizationId,
+              outletId: input.toOutletId,
+              globalProductId: sourceGlobalProductId,
+              name: sourceProduct.name,
+              category: sourceProduct.category,
+              imageUrl: sourceProduct.imageUrl,
+              voidWindowHours: sourceProduct.voidWindowHours,
+              refundWindowHours: sourceProduct.refundWindowHours,
+              isActive: sourceProduct.isActive,
+            })
+            .returning();
+          const [createdSku] = await tx
+            .insert(sku)
+            .values({
+              organizationId: input.organizationId,
+              productId: createdProduct.id,
+              globalSkuId: sourceGlobalSkuId,
+              sku: sourceSku.sku,
+              barcode: sourceSku.barcode,
+              name: sourceSku.name,
+              imageUrl: sourceSku.imageUrl,
+              baseUnitId: sourceSku.baseUnitId,
+              saleUnitId: sourceSku.saleUnitId,
+              saleUnitToBaseFactor: sourceSku.saleUnitToBaseFactor,
+              price: sourceSku.price,
+              cost: sourceSku.cost,
+              minStockBaseQty: sourceSku.minStockBaseQty,
+              isActive: sourceSku.isActive,
+            })
+            .returning();
+          targetSku = createdSku;
+          clonedTarget = true;
+        }
       }
 
       const [currentBalance] = await tx
@@ -593,11 +841,72 @@ export const inventoryRepository = {
         return { error: "INSUFFICIENT_STOCK" as const };
       }
 
+      let remainingBatchQty = input.quantityBase;
+      const batchAllocations: Array<{ sourceBatchId: string | null; targetBatchId: string; quantityBase: number }> = [];
+      const sourceBatches = await tx
+        .select({
+          id: inventoryBatch.id,
+          lotCode: inventoryBatch.lotCode,
+          expiryDate: inventoryBatch.expiryDate,
+          onHandBaseQty: inventoryBatch.onHandBaseQty,
+          unitCost: inventoryBatch.unitCost,
+        })
+        .from(inventoryBatch)
+        .where(and(
+          eq(inventoryBatch.organizationId, input.organizationId),
+          eq(inventoryBatch.outletId, input.fromOutletId),
+          eq(inventoryBatch.skuId, input.skuId),
+          sql`${inventoryBatch.onHandBaseQty} > 0`,
+        ))
+        .orderBy(sql`${inventoryBatch.expiryDate} asc nulls last`, inventoryBatch.receivedAt);
+
+      for (const batch of sourceBatches) {
+        if (remainingBatchQty <= 0.000001) break;
+        const batchQty = decimal(batch.onHandBaseQty);
+        const deducted = Math.min(batchQty, remainingBatchQty);
+        if (deducted <= 0) continue;
+        const updated = await tx
+          .update(inventoryBatch)
+          .set({
+            onHandBaseQty: sql`${inventoryBatch.onHandBaseQty} - ${fixed(deducted, 3)}`,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(inventoryBatch.id, batch.id), sql`${inventoryBatch.onHandBaseQty} >= ${fixed(deducted, 3)}`))
+          .returning({ id: inventoryBatch.id });
+        if (!updated.length) {
+          throw new ApiError("BAD_REQUEST", "Stok outlet asal tidak mencukupi", 400);
+        }
+
+        const [targetBatch] = await tx
+          .insert(inventoryBatch)
+          .values({
+            organizationId: input.organizationId,
+            outletId: input.toOutletId,
+            skuId: targetSku.id,
+            lotCode: batch.lotCode,
+            expiryDate: batch.expiryDate,
+            initialBaseQty: fixed(deducted, 3),
+            onHandBaseQty: fixed(deducted, 3),
+            unitCost: batch.unitCost,
+            sourceType: "inventory_transfer",
+            sourceId: input.referenceId,
+            sourceItemId: batch.id,
+            note: input.note,
+          })
+          .returning({ id: inventoryBatch.id });
+        batchAllocations.push({ sourceBatchId: batch.id, targetBatchId: targetBatch.id, quantityBase: deducted });
+        remainingBatchQty -= deducted;
+      }
+
+      if (remainingBatchQty > 0.000001) {
+        throw new ApiError("BAD_REQUEST", "Batch stok outlet asal tidak mencukupi. Reconcile batch gap sebelum transfer.", 400);
+      }
+
       await tx
         .insert(inventoryBalance)
         .values({
           outletId: input.toOutletId,
-          skuId: input.skuId,
+          skuId: targetSku.id,
           onHandBaseQty: fixed(input.quantityBase, 3),
         })
         .onConflictDoUpdate({
@@ -608,15 +917,16 @@ export const inventoryRepository = {
           },
         });
 
-      const movementValues = [
+      const movementValues = batchAllocations.flatMap((allocation) => [
         {
           organizationId: input.organizationId,
           outletId: input.fromOutletId,
           skuId: input.skuId,
+          batchId: allocation.sourceBatchId ?? undefined,
           type: "transfer_out" as const,
-          quantityBase: fixed(-input.quantityBase, 3),
-          quantityInput: fixed(input.quantityBase, 3),
-          unitId: targetSku.baseUnitId,
+          quantityBase: fixed(-allocation.quantityBase, 3),
+          quantityInput: fixed(allocation.quantityBase, 3),
+          unitId: sourceSku.baseUnitId,
           referenceType: "inventory_transfer",
           referenceId: input.referenceId,
           note: input.note ?? `Transfer ke ${toOutlet.name}`,
@@ -625,19 +935,20 @@ export const inventoryRepository = {
         {
           organizationId: input.organizationId,
           outletId: input.toOutletId,
-          skuId: input.skuId,
+          skuId: targetSku.id,
+          batchId: allocation.targetBatchId,
           type: "transfer_in" as const,
-          quantityBase: fixed(input.quantityBase, 3),
-          quantityInput: fixed(input.quantityBase, 3),
+          quantityBase: fixed(allocation.quantityBase, 3),
+          quantityInput: fixed(allocation.quantityBase, 3),
           unitId: targetSku.baseUnitId,
           referenceType: "inventory_transfer",
           referenceId: input.referenceId,
           note: input.note ?? `Transfer dari ${fromOutlet.name}`,
           actorUserId: input.actorUserId,
         },
-      ];
+      ]);
       const movements = await tx.insert(stockMovement).values(movementValues).returning();
-      return { movements, fromOutlet, toOutlet, sku: targetSku };
+      return { movements, fromOutlet, toOutlet, sourceSku, targetSku, clonedTarget };
     });
   },
 };

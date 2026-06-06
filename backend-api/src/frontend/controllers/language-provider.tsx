@@ -12,14 +12,15 @@ type LanguageContextValue = {
 };
 
 const dictionary: Dictionary = {
-  dashboard: "Dasbor",
+  dashboard: "Beranda",
   cashier: "Kasir",
   outlets: "Outlet",
   usersCashiers: "Pengguna",
   roleAccess: "Setting Role Akses",
   products: "Produk",
+  units: "Satuan",
   customers: "Pelanggan",
-  promotions: "Promo",
+  promotions: "Pajak & Promo",
   inventory: "Persediaan",
   stockTransfers: "Transfer Barang",
   stockOpname: "Stock Opname",
@@ -37,7 +38,7 @@ const dictionary: Dictionary = {
   menuGroupMasterData: "Master Data",
   menuGroupMonitoring: "Monitoring",
   menuGroupSettings: "Pengaturan Aplikasi",
-  backendDashboard: "Dasbor Backend",
+  backendDashboard: "Beranda Backend",
   adminConsole: "Konsol Admin",
   logout: "Keluar",
   loggingOut: "Keluar...",

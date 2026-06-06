@@ -3,23 +3,36 @@ import { appRoles, roleAccessMenus } from "@/lib/role-access";
 
 export const uuidSchema = z.string().uuid();
 export const dateStringSchema = z.string().datetime().optional();
+const imageReferenceSchema = z
+  .string()
+  .max(2048)
+  .refine((value) => !value.trim().toLowerCase().startsWith("data:image"), {
+    message: "Upload gambar wajib disimpan ke storage lokal, bukan data URL.",
+  });
+const skuQuantityModeSchema = z.enum(["required", "fixed_one"]);
+const receiptFooterNoteMaxLength = 1000;
+
+function sanitizeFooterNote(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return "Terima kasih";
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").slice(0, receiptFooterNoteMaxLength);
+}
 
 export const createOutletSchema = z.object({
   name: z.string().min(1),
   code: z.string().min(1).max(24),
   address: z.string().optional(),
-  logoUrl: z.string().optional(),
+  logoUrl: imageReferenceSchema.optional(),
 });
 
 export const updateOutletSchema = z.object({
   name: z.string().min(1).optional(),
   address: z.string().nullable().optional(),
-  logoUrl: z.string().nullable().optional(),
+  logoUrl: imageReferenceSchema.nullable().optional(),
   isActive: z.boolean().optional(),
 });
 
 export const updateSettingsSchema = z.object({
-  defaultOutletLogoUrl: z.string().nullable().optional(),
+  defaultOutletLogoUrl: imageReferenceSchema.nullable().optional(),
   posSettings: z
     .object({
       taxEnabled: z.boolean().default(false),
@@ -33,15 +46,40 @@ export const updateSettingsSchema = z.object({
     .object({
       paperWidth: z.enum(["58", "80"]).default("58"),
       autoPrint: z.boolean().default(false),
+      printMode: z.literal("browser").default("browser"),
       printerName: z.string().trim().max(120).default("Thermal Bluetooth RPP02N"),
       header: z.array(z.string()).default(["logo", "outlet", "address"]),
       body: z.array(z.string()).default(["items", "totals", "payment"]),
       footer: z.array(z.string()).default(["note"]),
-      footerNote: z.string().max(240).default("Terima kasih"),
+      footerNote: z.string().max(receiptFooterNoteMaxLength).default("Terima kasih"),
     })
     .nullable()
     .optional(),
 });
+
+export type ReceiptLayoutSettings = NonNullable<NonNullable<z.infer<typeof updateSettingsSchema>["receiptLayout"]>>;
+
+export function sanitizeReceiptLayoutSettings(layout: unknown): ReceiptLayoutSettings {
+  const source = typeof layout === "object" && layout !== null ? layout as Partial<ReceiptLayoutSettings> : {};
+  const headerSource = Array.isArray(source.header) ? source.header : ["logo", "outlet", "address"];
+  const bodySource = Array.isArray(source.body) ? source.body : ["items", "totals", "payment"];
+  const footerSource = Array.isArray(source.footer) ? source.footer : ["note"];
+  const header = headerSource.filter((block) => block !== "note");
+  const body = bodySource.filter((block) => block !== "note");
+  const footer = footerSource.filter((block) => block !== "logo" && block !== "note");
+  return {
+    paperWidth: source.paperWidth === "80" ? "80" : "58",
+    autoPrint: Boolean(source.autoPrint),
+    printMode: "browser",
+    printerName: typeof source.printerName === "string" && source.printerName.trim()
+      ? source.printerName.trim()
+      : "Thermal Bluetooth RPP02N",
+    header,
+    body,
+    footer: [...footer, "note"],
+    footerNote: sanitizeFooterNote(source.footerNote),
+  };
+}
 
 const promotionBaseSchema = z.object({
     name: z.string().min(1).max(120),
@@ -114,7 +152,7 @@ export const updateRoleAccessSchema = z.object({
 export const createUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
-  image: z.string().nullable().optional(),
+  image: imageReferenceSchema.nullable().optional(),
   password: z.string().min(8),
   role: z.enum(["owner", "admin_outlet", "cashier", "warehouse", "auditor"]).default("cashier"),
   outletIds: z.array(uuidSchema).default([]),
@@ -123,7 +161,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   name: z.string().min(1).optional(),
   email: z.string().email().optional(),
-  image: z.string().nullable().optional(),
+  image: imageReferenceSchema.nullable().optional(),
   password: z.string().min(8).optional(),
   role: z.enum(["owner", "admin_outlet", "cashier", "warehouse", "auditor"]).optional(),
   isActive: z.boolean().optional(),
@@ -137,43 +175,59 @@ export const createUnitSchema = z.object({
   toBaseFactor: z.coerce.number().positive().default(1),
 });
 
+export const updateUnitSchema = z.object({
+  name: z.string().min(1).optional(),
+  code: z.string().min(1).max(16).optional(),
+  kind: z.enum(["weight", "count", "package"]).optional(),
+  toBaseFactor: z.coerce.number().positive().optional(),
+  isActive: z.boolean().optional(),
+});
+
 export const createProductSchema = z.object({
   name: z.string().min(1),
   category: z.string().optional(),
+  imageUrl: imageReferenceSchema.nullable().optional(),
   voidWindowHours: z.coerce.number().int().nonnegative().nullable().default(0),
   refundWindowHours: z.coerce.number().int().nonnegative().nullable().default(0),
   sku: z.object({
     sku: z.string().min(1),
     barcode: z.string().optional(),
     name: z.string().min(1),
+    imageUrl: imageReferenceSchema.nullable().optional(),
     baseUnitId: uuidSchema,
     saleUnitId: uuidSchema,
     saleUnitToBaseFactor: z.coerce.number().positive().default(1),
     price: z.coerce.number().nonnegative(),
     cost: z.coerce.number().nonnegative().default(0),
     minStockBaseQty: z.coerce.number().nonnegative().default(0),
+    trackInventory: z.coerce.boolean().default(true),
+    quantityMode: skuQuantityModeSchema.default("required"),
   }),
 });
 
 export const updateProductSchema = z.object({
   name: z.string().min(1).optional(),
   category: z.string().nullable().optional(),
+  imageUrl: imageReferenceSchema.nullable().optional(),
   voidWindowHours: z.coerce.number().int().nonnegative().nullable().optional(),
   refundWindowHours: z.coerce.number().int().nonnegative().nullable().optional(),
   isActive: z.boolean().optional(),
   skus: z
     .array(
       z.object({
-        id: uuidSchema,
+        id: uuidSchema.optional(),
         sku: z.string().min(1).optional(),
         barcode: z.string().nullable().optional(),
         name: z.string().min(1).optional(),
+        imageUrl: imageReferenceSchema.nullable().optional(),
         baseUnitId: uuidSchema.optional(),
         saleUnitId: uuidSchema.optional(),
         saleUnitToBaseFactor: z.coerce.number().positive().optional(),
         price: z.coerce.number().nonnegative().optional(),
         cost: z.coerce.number().nonnegative().optional(),
         minStockBaseQty: z.coerce.number().nonnegative().optional(),
+        trackInventory: z.coerce.boolean().optional(),
+        quantityMode: skuQuantityModeSchema.optional(),
         isActive: z.boolean().optional(),
       }),
     )
@@ -237,6 +291,10 @@ export const createPurchaseOrderSchema = z.object({
 
 export const receivePurchaseOrderSchema = z.object({
   note: z.string().max(500).optional(),
+});
+
+export const cancelPurchaseOrderSchema = z.object({
+  reason: z.string().trim().min(3).max(240),
 });
 
 export const createPurchasePaymentSchema = z.object({
@@ -311,6 +369,16 @@ export const refundSaleSchema = z.object({
   refundMethod: z.enum(["cash", "qris", "transfer", "card", "ewallet", "other"]).optional(),
 });
 
+export const resolveSyncReviewSaleSchema = z
+  .object({
+    action: z.enum(["post", "reject"]),
+    reason: z.string().trim().max(240).optional(),
+  })
+  .refine((value) => value.action === "post" || (value.reason?.length ?? 0) >= 3, {
+    message: "Alasan minimal 3 karakter untuk reject transaksi review",
+    path: ["reason"],
+  });
+
 export const openShiftSchema = z.object({
   outletId: uuidSchema,
   openingCash: z.coerce.number().nonnegative().default(0),
@@ -344,6 +412,7 @@ export const createOperationalExpenseSchema = z.object({
 export const createWasteAdjustmentSchema = z.object({
   outletId: uuidSchema,
   skuId: uuidSchema,
+  idempotencyKey: z.string().min(8).max(120).optional(),
   quantity: z.coerce.number().positive(),
   unitId: uuidSchema,
   reason: z.enum([
@@ -372,11 +441,18 @@ export const createInventoryAdjustmentSchema = z.object({
   note: z.string().min(1).optional(),
 });
 
+export const reconcileBatchGapSchema = z.object({
+  outletId: uuidSchema,
+  skuId: uuidSchema,
+});
+
 export const createInventoryTransferSchema = z
   .object({
     fromOutletId: uuidSchema,
     toOutletId: uuidSchema,
     skuId: uuidSchema,
+    targetSkuId: uuidSchema.nullable().optional(),
+    cloneToOutlet: z.boolean().optional(),
     quantityBase: z.coerce.number().positive(),
     note: z.string().max(500).optional(),
   })

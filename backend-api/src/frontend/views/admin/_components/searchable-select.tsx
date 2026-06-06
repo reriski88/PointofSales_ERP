@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronsUpDown, Search, X } from "lucide-react";
 
 export type SearchableSelectOption = {
@@ -28,9 +29,16 @@ export function SearchableSelect(props: {
 }) {
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [dropdownStyle, setDropdownStyle] = useState({
+    left: 0,
+    top: 0,
+    width: 0,
+    listMaxHeight: 256,
+  });
   const selected = props.options.find((option) => option.value === props.value);
   const clearValue = props.clearValue ?? "";
   const canClear = props.allowClear && props.value !== clearValue && !props.disabled;
@@ -46,22 +54,62 @@ export function SearchableSelect(props: {
     );
   }, [props.options, query]);
 
+  const updateDropdownPosition = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const viewportPadding = 12;
+    const preferredListHeight = 256;
+    const searchHeight = 41;
+    const minimumComfortHeight = 160;
+    const belowSpace = window.innerHeight - rect.bottom - viewportPadding;
+    const aboveSpace = rect.top - viewportPadding;
+    const openAbove = belowSpace < minimumComfortHeight && aboveSpace > belowSpace;
+    const availableSpace = Math.max(minimumComfortHeight, openAbove ? aboveSpace : belowSpace);
+    const desiredListHeight = filteredOptions.length
+      ? Math.min(preferredListHeight, filteredOptions.length * 38 + 8)
+      : 56;
+    const listMaxHeight = Math.max(80, Math.min(preferredListHeight, availableSpace - searchHeight - 4));
+    const actualDropdownHeight = searchHeight + Math.min(desiredListHeight, listMaxHeight);
+    const top = openAbove ? rect.top - actualDropdownHeight - 4 : rect.bottom + 4;
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      Math.max(viewportPadding, window.innerWidth - rect.width - viewportPadding),
+    );
+
+    setDropdownStyle({
+      left,
+      top: Math.max(viewportPadding, top),
+      width: rect.width,
+      listMaxHeight,
+    });
+  }, [filteredOptions.length]);
+
   useEffect(() => {
     if (!open) return;
 
-    const frame = window.requestAnimationFrame(() => searchRef.current?.focus());
+    const frame = window.requestAnimationFrame(() => {
+      updateDropdownPosition();
+      searchRef.current?.focus();
+    });
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
         setOpen(false);
       }
     };
+    const onReposition = () => updateDropdownPosition();
     window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", onReposition);
+    window.addEventListener("scroll", onReposition, true);
 
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
     };
-  }, [open]);
+  }, [open, updateDropdownPosition]);
 
   function selectValue(value: string) {
     props.onChange(value);
@@ -114,10 +162,16 @@ export function SearchableSelect(props: {
         </span>
       </button>
 
-      {open ? (
+      {open && typeof document !== "undefined" ? createPortal(
         <div
+          ref={dropdownRef}
+          style={{
+            left: dropdownStyle.left,
+            top: dropdownStyle.top,
+            width: dropdownStyle.width,
+          }}
           className={[
-            "absolute left-0 right-0 top-[calc(100%+0.25rem)] z-50 overflow-hidden rounded-md border bg-card text-card-foreground shadow-lg",
+            "fixed z-[10020] overflow-hidden rounded-md border bg-card text-card-foreground shadow-lg",
             props.dropdownClassName,
           ].filter(Boolean).join(" ")}
         >
@@ -140,7 +194,12 @@ export function SearchableSelect(props: {
               }}
             />
           </div>
-          <div id={`${id}-listbox`} role="listbox" className="max-h-64 overflow-y-auto py-1">
+          <div
+            id={`${id}-listbox`}
+            role="listbox"
+            className="overflow-y-auto py-1"
+            style={{ maxHeight: dropdownStyle.listMaxHeight }}
+          >
             {filteredOptions.map((option) => {
               const active = option.value === props.value;
               return (
@@ -173,7 +232,7 @@ export function SearchableSelect(props: {
             ) : null}
           </div>
         </div>
-      ) : null}
+      , document.body) : null}
     </div>
   );
 }

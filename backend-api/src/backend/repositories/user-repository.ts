@@ -49,6 +49,21 @@ export const userRepository = {
       .limit(1);
   },
 
+  findCredentialAccount(userId: string) {
+    return db
+      .select({ password: account.password })
+      .from(account)
+      .where(and(eq(account.userId, userId), eq(account.providerId, "credential")))
+      .limit(1);
+  },
+
+  updatePassword(userId: string, password: string) {
+    return db
+      .update(account)
+      .set({ password, updatedAt: new Date() })
+      .where(and(eq(account.userId, userId), eq(account.providerId, "credential")));
+  },
+
   completeCreatedUser(userId: string, values: Partial<typeof user.$inferInsert>, outletIds: string[]) {
     return db.transaction(async (tx) => {
       const [updatedUser] = await tx.update(user).set(values).where(eq(user.id, userId)).returning();
@@ -113,11 +128,12 @@ export const userRepository = {
     }
   },
 
-  updateProfile(userId: string, name: string) {
+  updateProfile(userId: string, values: { name: string; image?: string | null }) {
     return db
       .update(user)
       .set({
-        name,
+        name: values.name,
+        ...(values.image !== undefined ? { image: values.image } : {}),
         updatedAt: new Date(),
       })
       .where(eq(user.id, userId))
@@ -125,6 +141,7 @@ export const userRepository = {
         id: user.id,
         name: user.name,
         email: user.email,
+        image: user.image,
         role: user.role,
       });
   },
