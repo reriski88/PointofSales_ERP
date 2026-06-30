@@ -1,6 +1,6 @@
 import { customerRepository } from "@/backend/repositories/customer-repository";
 import { writeAudit } from "@/lib/audit";
-import { created, handleRouteError, ok, parseJson } from "@/lib/http";
+import { created, handleRouteError, ok, parseJson, parseListQuery } from "@/lib/http";
 import { requireActor, requirePermission } from "@/lib/rbac";
 import { publishRealtimeEvent } from "@/lib/realtime";
 import { createCustomerSchema } from "@/lib/validation";
@@ -15,7 +15,17 @@ export async function GET(request: Request) {
   try {
     const actor = await requireActor(request);
     await requirePermission(actor, "customers", "view");
-    const rows = await customerRepository.findCustomers(actor.organizationId);
+    const listQuery = parseListQuery(new URL(request.url).searchParams);
+    const rows = await customerRepository.findCustomers(actor.organizationId, listQuery);
+    if (listQuery.limit) {
+      return ok({
+        items: rows,
+        page: listQuery.page ?? Math.floor((listQuery.offset ?? 0) / listQuery.limit) + 1,
+        limit: listQuery.limit,
+        offset: listQuery.offset ?? 0,
+        hasMore: rows.length === listQuery.limit,
+      });
+    }
     return ok(rows);
   } catch (error) {
     return handleRouteError(error);

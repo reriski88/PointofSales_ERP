@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customer,
@@ -8,6 +8,7 @@ import {
   sale,
 } from "@/db/schema";
 import { fixed } from "@/lib/number";
+import type { ListQuery } from "@/lib/http";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -16,7 +17,9 @@ export const customerRepository = {
     return db.transaction(callback);
   },
 
-  findCustomers(organizationId: string) {
+  findCustomers(organizationId: string, options: ListQuery = {}) {
+    const search = options.search ? `%${options.search}%` : undefined;
+
     return db
       .select({
         id: customer.id,
@@ -33,9 +36,16 @@ export const customerRepository = {
       })
       .from(customer)
       .leftJoin(customerReceivable, eq(customerReceivable.customerId, customer.id))
-      .where(eq(customer.organizationId, organizationId))
+      .where(
+        and(
+          eq(customer.organizationId, organizationId),
+          search ? or(ilike(customer.name, search), ilike(customer.code, search), ilike(customer.phone, search)) : undefined,
+        ),
+      )
       .groupBy(customer.id)
-      .orderBy(customer.name);
+      .orderBy(customer.name)
+      .limit(options.limit ?? 500)
+      .offset(options.offset ?? 0);
   },
 
   findActiveCustomer(tx: Tx, customerId: string, organizationId: string) {

@@ -222,7 +222,7 @@ export function FinancialReportsClient() {
   return (
     <div className="space-y-6">
       <div className="thin-x-scroll overflow-x-auto border-b bg-card">
-        <div className="flex min-w-max gap-8 px-4">
+        <div className="flex min-w-max gap-3 px-4 sm:gap-8">
           {tabOrder.map((tab) => (
             <FinancialTabButton key={tab} active={activeTab === tab} icon={tabIcon(tab)} onClick={() => selectTab(tab)}>
               {report?.labels[tab] ?? tab}
@@ -278,7 +278,7 @@ function FinancialTabButton(props: {
   return (
     <button
       type="button"
-      className={`relative flex h-14 items-center gap-2 border-b-2 text-sm font-medium transition-colors ${
+      className={`relative flex h-12 items-center gap-2 whitespace-nowrap border-b-2 px-1 text-sm font-medium transition-colors sm:h-14 sm:px-1.5 ${
         props.active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
       }`}
       onClick={props.onClick}

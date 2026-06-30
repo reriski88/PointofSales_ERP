@@ -120,14 +120,14 @@ export function AdminLoginForm() {
 
   return (
     <main className="min-h-screen bg-[#F6FBF8]">
-      <div className="mx-auto grid min-h-screen w-full max-w-6xl items-center gap-8 px-6 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
-        <section className="flex min-h-[34rem] flex-col justify-between overflow-hidden rounded-lg px-1 sm:min-h-[36rem] lg:min-h-[32rem]">
+      <div className="mx-auto grid min-h-screen w-full max-w-6xl items-center gap-6 px-4 py-6 sm:px-6 sm:py-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
+        <section className="flex min-h-0 flex-col justify-between overflow-hidden rounded-lg px-1 sm:min-h-[32rem] lg:min-h-[32rem]">
           <div className="max-w-xl space-y-4">
             <div className="inline-flex items-center rounded-full border border-[#A8DADC]/70 bg-white/80 px-3 py-1 text-sm font-medium text-[#1D3557] shadow-sm">
               Point of Sales
             </div>
             <div className="space-y-3">
-              <h1 className="max-w-lg text-3xl font-semibold leading-tight tracking-normal text-[#1D3557] sm:text-4xl">
+              <h1 className="max-w-lg text-2xl font-semibold leading-tight tracking-normal text-[#1D3557] sm:text-4xl">
                 Satu tempat untuk kasir, stok, dan laporan outlet.
               </h1>
               <p className="max-w-lg text-base leading-7 text-[#1D3557]/75">
@@ -135,7 +135,7 @@ export function AdminLoginForm() {
               </p>
             </div>
           </div>
-          <div className="relative mt-6 min-h-[18rem] flex-1 sm:min-h-[21rem] lg:min-h-0">
+          <div className="relative mt-4 min-h-[12rem] flex-1 sm:mt-6 sm:min-h-[18rem] lg:min-h-0">
             <Image
               src="/images/login-pos-cartoon-transaction-transparent.png"
               alt="Ilustrasi kartun kasir dan pelanggan sedang transaksi POS"

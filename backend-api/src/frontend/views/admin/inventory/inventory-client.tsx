@@ -213,7 +213,7 @@ function InventoryTabButton(props: { active: boolean; children: ReactNode; icon:
     <button
       type="button"
       className={[
-        "relative inline-flex h-14 items-center gap-2 border-b-2 px-1 text-sm font-medium transition-colors",
+        "relative inline-flex h-12 items-center gap-2 whitespace-nowrap border-b-2 px-1 text-sm font-medium transition-colors sm:h-14 sm:px-1.5",
         props.active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground",
       ].join(" ")}
       onClick={props.onClick}
@@ -1514,7 +1514,7 @@ export function InventoryClient({ mode = "inventory" }: { mode?: InventoryClient
           ) : null}
 
           <div className="thin-x-scroll overflow-x-auto border-b bg-card">
-            <div className="flex min-w-max gap-8 px-4">
+            <div className="flex min-w-max gap-3 px-4 sm:gap-8">
               <InventoryTabButton active={inventoryTab === "stock"} icon={Boxes} onClick={() => setInventoryTab("stock")}>Daftar Stok Produk</InventoryTabButton>
               <InventoryTabButton active={inventoryTab === "batch"} icon={PackageSearch} onClick={() => setInventoryTab("batch")}>Batch & Expired Date</InventoryTabButton>
               <InventoryTabButton active={inventoryTab === "movement"} icon={ArrowRightLeft} onClick={() => setInventoryTab("movement")}>Mutasi Terakhir</InventoryTabButton>

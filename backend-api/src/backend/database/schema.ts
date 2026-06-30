@@ -346,6 +346,7 @@ export const product = pgTable(
   },
   (table) => ({
     productOrgNameIdx: index("product_org_name_idx").on(table.organizationId, table.name),
+    productOutletActiveUpdatedIdx: index("product_outlet_active_updated_idx").on(table.outletId, table.isActive, table.updatedAt),
     productGlobalIdx: index("product_global_idx").on(table.organizationId, table.globalProductId),
   }),
 );
@@ -382,6 +383,7 @@ export const sku = pgTable(
   },
   (table) => ({
     skuBarcodeIdx: index("sku_barcode_idx").on(table.barcode),
+    skuProductActiveUpdatedIdx: index("sku_product_active_updated_idx").on(table.productId, table.isActive, table.updatedAt),
     skuGlobalIdx: index("sku_global_idx").on(table.organizationId, table.globalSkuId),
   }),
 );

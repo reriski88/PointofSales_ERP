@@ -1,13 +1,16 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, ilike, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { inventoryBalance, product, sku, unit } from "@/db/schema";
+import type { ListQuery } from "@/lib/http";
 
 const baseUnit = alias(unit, "base_unit");
 const saleUnit = alias(unit, "sale_unit");
 
 export const catalogRepository = {
-  findOutletCatalog(organizationId: string, outletId: string) {
+  findOutletCatalog(organizationId: string, outletId: string, options: ListQuery = {}) {
+    const search = options.search ? `%${options.search}%` : undefined;
+
     return db
       .select({
         productId: product.id,
@@ -39,7 +42,18 @@ export const catalogRepository = {
       .leftJoin(inventoryBalance, and(eq(inventoryBalance.skuId, sku.id), eq(inventoryBalance.outletId, outletId)))
       .leftJoin(baseUnit, eq(baseUnit.id, sku.baseUnitId))
       .leftJoin(saleUnit, eq(saleUnit.id, sku.saleUnitId))
-      .where(and(eq(sku.organizationId, organizationId), eq(product.outletId, outletId), eq(sku.isActive, true), eq(product.isActive, true)));
+      .where(
+        and(
+          eq(sku.organizationId, organizationId),
+          eq(product.outletId, outletId),
+          eq(sku.isActive, true),
+          eq(product.isActive, true),
+          search ? or(ilike(product.name, search), ilike(sku.name, search), ilike(sku.sku, search), ilike(sku.barcode, search)) : undefined,
+        ),
+      )
+      .orderBy(asc(product.name), asc(sku.name))
+      .limit(options.limit ?? 1000)
+      .offset(options.offset ?? 0);
   },
 
   async pullChanges(organizationId: string, outletId: string, sinceDate: Date) {

@@ -17,8 +17,8 @@ export function PaginationControls(props: {
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border bg-card px-3 py-2 text-sm shadow-sm md:flex-row md:items-center md:justify-between">
-      <p className="text-muted-foreground">{start}-{end} / {props.total}</p>
-      <div className="flex flex-wrap items-center gap-2">
+      <p className="text-center text-muted-foreground md:text-left">{start}-{end} / {props.total}</p>
+      <div className="flex flex-wrap items-center justify-center gap-2 md:justify-end">
         <select
           className="flex h-9 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={props.pageSize}

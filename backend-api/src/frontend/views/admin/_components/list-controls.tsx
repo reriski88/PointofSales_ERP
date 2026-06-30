@@ -38,7 +38,7 @@ export function ListControls(props: {
       </div>
 
       {props.filters?.map((filter) => (
-        <div key={filter.label} className="min-w-36 lg:w-40">
+        <div key={filter.label} className="w-full min-w-0 sm:min-w-36 lg:w-40">
           <SearchableSelect
             className="h-9"
             value={filter.value}
@@ -51,7 +51,7 @@ export function ListControls(props: {
         </div>
       ))}
 
-      <div className="lg:w-44">
+      <div className="w-full min-w-0 lg:w-44">
         <div className="relative">
           <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <select

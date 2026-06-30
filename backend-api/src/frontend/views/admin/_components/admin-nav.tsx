@@ -28,7 +28,6 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { AdminTour } from "./admin-tour";
 import { useLanguage } from "@/frontend/controllers/language-provider";
 import {
   allOutletsValue,
@@ -42,7 +41,6 @@ import {
   getProfile,
 } from "@/frontend/controllers/admin-data-cache";
 import { confirmAction } from "./toast-provider";
-// import { AiChatWidget } from "./ai-chat-widget";
 import { SearchableSelect } from "./searchable-select";
 
 type MenuKey =
@@ -491,10 +489,6 @@ export function AdminNav() {
           onSelectedOutletChange={setSelectedOutletId}
         />
       </aside>
-      <AdminTour pathname={pathname} />
-      {/* <AiChatWidget
-        enabled={["owner", "admin_outlet"].includes(profileRole ?? "")}
-      /> */}
     </>
   );
 }

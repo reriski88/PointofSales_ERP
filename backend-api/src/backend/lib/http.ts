@@ -28,6 +28,31 @@ export function created<T>(data: T) {
   return ok(data, 201);
 }
 
+export type ListQuery = {
+  limit?: number;
+  offset?: number;
+  page?: number;
+  search?: string;
+};
+
+export function parseListQuery(searchParams: URLSearchParams, maxLimit = 500): ListQuery {
+  const rawLimit = searchParams.get("limit");
+  const rawPage = searchParams.get("page");
+  const rawOffset = searchParams.get("offset");
+  const search = searchParams.get("q")?.trim() || undefined;
+
+  if (!rawLimit && !rawPage && !rawOffset && !search) return {};
+
+  const parsedLimit = rawLimit ? Number(rawLimit) : 100;
+  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.trunc(parsedLimit), 1), maxLimit) : 100;
+  const parsedPage = rawPage ? Number(rawPage) : undefined;
+  const page = parsedPage && Number.isFinite(parsedPage) ? Math.max(Math.trunc(parsedPage), 1) : undefined;
+  const parsedOffset = rawOffset ? Number(rawOffset) : undefined;
+  const offset = page ? (page - 1) * limit : parsedOffset && Number.isFinite(parsedOffset) ? Math.max(Math.trunc(parsedOffset), 0) : 0;
+
+  return { limit, offset, page, search };
+}
+
 export async function parseJson<T>(request: Request, schema: ZodSchema<T>): Promise<T> {
   let body: unknown;
   try {

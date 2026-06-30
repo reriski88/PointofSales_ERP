@@ -131,20 +131,20 @@ export function DashboardClient() {
   const activeUserPercent = percent(summary?.stats.usersActive ?? 0, summary?.stats.usersTotal ?? 0);
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-4 sm:space-y-5">
       <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
         <div className="h-1.5 bg-[linear-gradient(90deg,#2563eb,#16a34a,#f59e0b,#dc2626)]" />
-        <div className="p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold leading-tight">Dashboard Statistik</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Ringkasan penjualan, operasional outlet, produk, user, dan alert stok.</p>
+        <div className="p-3 sm:p-4">
+        <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold leading-tight sm:text-lg">Dashboard Statistik</h2>
+            <p className="mt-1 text-sm leading-5 text-muted-foreground">Ringkasan penjualan, operasional outlet, produk, user, dan alert stok.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex h-9 items-center rounded-md border bg-background px-3 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <span className="inline-flex min-h-9 min-w-0 items-center rounded-md border bg-background px-3 text-xs font-medium text-muted-foreground">
               {summary?.salesChart.label ?? "Periode aktif"}
             </span>
-            <Button type="button" variant="outline" className="h-9 gap-2" onClick={() => void loadSummary()} disabled={isLoading}>
+            <Button type="button" variant="outline" className="h-9 w-full gap-2 sm:w-auto" onClick={() => void loadSummary()} disabled={isLoading}>
               <RefreshCcw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
@@ -154,34 +154,34 @@ export function DashboardClient() {
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard icon={ReceiptText} label="Penjualan Hari Ini" value={currency(summary?.stats.netSalesToday, language)} detail={`${summary?.stats.transactionsToday ?? 0} transaksi`} tone="blue" />
         <MetricCard icon={Building2} label="Outlet Aktif" value={`${summary?.stats.outletsActive ?? 0}/${summary?.stats.outletsTotal ?? 0}`} detail={`${activeOutletPercent}% aktif`} tone="green" />
         <MetricCard icon={Boxes} label="Produk / SKU" value={`${summary?.stats.products ?? 0}/${summary?.stats.skus ?? 0}`} detail="Produk aktif dan varian" tone="amber" />
         <MetricCard icon={Users} label="User Aktif" value={`${summary?.stats.usersActive ?? 0}/${summary?.stats.usersTotal ?? 0}`} detail={`${activeUserPercent}% aktif`} tone="violet" />
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
-        <div className="rounded-lg border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)] xl:gap-5">
+        <div className="min-w-0 rounded-lg border bg-card p-3 shadow-sm transition-shadow hover:shadow-md sm:p-4">
+          <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <ChartTitle icon={LineChart} title="Grafik Penjualan" detail="Nilai penjualan bersih per periode" />
             <SalesChartControls mode={chartMode} onModeChange={setChartMode} date={chartDate} onDateChange={setChartDate} from={chartFrom} onFromChange={setChartFrom} to={chartTo} onToChange={setChartTo} month={chartMonth} onMonthChange={setChartMonth} year={chartYear} onYearChange={setChartYear} onApply={() => void loadSummary()} />
           </div>
           <SalesAreaChart rows={summary?.salesChart.rows ?? []} />
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-1">
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-1 xl:gap-5">
           <DonutPanel title="Outlet" label={`${activeOutletPercent}%`} detail="Outlet aktif" segments={[{ label: "Aktif", value: summary?.stats.outletsActive ?? 0, color: chartColors[1] }, { label: "Nonaktif", value: Math.max(0, (summary?.stats.outletsTotal ?? 0) - (summary?.stats.outletsActive ?? 0)), color: chartColors[3] }]} />
           <DonutPanel title="Alert Operasional" label={formatNumber(totalAlerts, 0, language)} detail="Alert aktif" segments={[{ label: "Stok kosong", value: summary?.alerts.emptyStock.length ?? 0, color: chartColors[3] }, { label: "Stok rendah", value: summary?.alerts.lowStock.length ?? 0, color: chartColors[2] }, { label: "Outlet tutup", value: summary?.alerts.closedOutlets.length ?? 0, color: "#64748b" }]} />
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
-        <div className="rounded-lg border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+      <section className="grid min-w-0 gap-4 xl:grid-cols-2 xl:gap-5">
+        <div className="min-w-0 rounded-lg border bg-card p-3 shadow-sm transition-shadow hover:shadow-md sm:p-4">
           <ChartTitle icon={Trophy} title="Produk Terlaris" detail="Ranking produk berdasarkan qty terjual" />
           <TopProductBars products={topProducts} />
         </div>
-        <div className="rounded-lg border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+        <div className="min-w-0 rounded-lg border bg-card p-3 shadow-sm transition-shadow hover:shadow-md sm:p-4">
           <ChartTitle icon={CircleAlert} title="Ringkasan Alert" detail="Stok kosong, stok rendah, dan outlet tutup" />
           <AlertSummary summary={summary} />
         </div>
@@ -212,26 +212,26 @@ function SalesChartControls(props: {
     { value: "yearly", label: "Tahunan" },
   ];
   return (
-    <div className="flex w-full justify-end lg:w-auto">
-      <div className="flex max-w-full flex-col items-end gap-2 rounded-lg border bg-muted/30 p-2">
-        <div className="inline-flex h-9 overflow-hidden rounded-md border bg-background p-0.5">
+    <div className="flex w-full min-w-0 justify-start md:justify-end lg:w-auto">
+      <div className="flex w-full min-w-0 max-w-full flex-col gap-2 rounded-lg border bg-muted/30 p-2 md:w-auto md:items-end">
+        <div className="grid w-full grid-cols-2 overflow-hidden rounded-md border bg-background p-0.5 sm:inline-flex sm:h-9 sm:w-auto">
         {modes.map((mode) => (
           <button
             key={mode.value}
             type="button"
-            className={`rounded px-3 text-xs font-semibold transition-colors ${props.mode === mode.value ? "bg-blue-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            className={`min-h-9 rounded px-3 text-xs font-semibold transition-colors sm:min-h-0 ${props.mode === mode.value ? "bg-blue-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
             onClick={() => props.onModeChange(mode.value)}
           >
             {mode.label}
           </button>
         ))}
         </div>
-        <div className="thin-x-scroll flex max-w-full items-center justify-end gap-2 overflow-x-auto">
+        <div className="grid w-full max-w-full grid-cols-1 gap-2 sm:flex sm:items-center sm:justify-end">
           {props.mode === "range" ? <><MiniInput type="date" value={props.from} onChange={props.onFromChange} /><MiniInput type="date" value={props.to} onChange={props.onToChange} /></> : null}
           {props.mode === "daily" ? <MiniInput type="date" value={props.date} onChange={props.onDateChange} /> : null}
           {props.mode === "monthly" ? <MiniInput type="month" value={props.month} onChange={props.onMonthChange} /> : null}
           {props.mode === "yearly" ? <MiniInput type="number" value={props.year} onChange={props.onYearChange} /> : null}
-          <Button type="button" className="h-9 shrink-0 px-4" onClick={props.onApply}>Apply</Button>
+          <Button type="button" className="h-9 w-full shrink-0 px-4 sm:w-auto" onClick={props.onApply}>Apply</Button>
         </div>
       </div>
     </div>
@@ -239,7 +239,7 @@ function SalesChartControls(props: {
 }
 
 function MiniInput(props: { type: string; value: string; onChange: (value: string) => void }) {
-  return <input className="h-9 w-[9.25rem] rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" type={props.type} value={props.value} onChange={(event) => props.onChange(event.target.value)} />;
+  return <input className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[9.25rem]" type={props.type} value={props.value} onChange={(event) => props.onChange(event.target.value)} />;
 }
 
 function SalesAreaChart(props: { rows: SalesChartPoint[] }) {
@@ -260,9 +260,9 @@ function SalesAreaChart(props: { rows: SalesChartPoint[] }) {
   const area = points.length ? `${padX},${height - padY} ${line} ${width - padX},${height - padY}` : "";
 
   return (
-    <div className="mt-4 thin-x-scroll overflow-x-auto">
+    <div className="mt-4 min-w-0 overflow-hidden rounded-lg border bg-[linear-gradient(180deg,#eff6ff_0%,#ffffff_55%,#f8fafc_100%)]">
       {rows.length ? (
-        <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[680px] overflow-visible rounded-lg bg-[linear-gradient(180deg,#eff6ff_0%,#ffffff_55%,#f8fafc_100%)]">
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="block h-[220px] w-full overflow-visible sm:h-[260px]">
           <defs>
             <linearGradient id="salesArea" x1="0" x2="0" y1="0" y2="1">
               <stop offset="0%" stopColor="#2563eb" stopOpacity="0.28" />
@@ -288,7 +288,7 @@ function SalesAreaChart(props: { rows: SalesChartPoint[] }) {
           {points.map((point, index) => index % Math.ceil(points.length / 6 || 1) === 0 ? <text key={point.row.label} x={point.x} y={height - 6} textAnchor="middle" className="fill-slate-500 text-[11px]">{point.row.label}</text> : null)}
         </svg>
       ) : (
-        <div className="rounded-lg border bg-muted/20 p-6 text-sm text-muted-foreground">Belum ada data penjualan pada periode ini.</div>
+        <div className="bg-muted/20 p-4 text-sm text-muted-foreground sm:p-6">Belum ada data penjualan pada periode ini.</div>
       )}
     </div>
   );
@@ -305,20 +305,20 @@ function DonutPanel(props: { title: string; label: string; detail: string; segme
     return { ...segment, dash, offset };
   });
   return (
-    <div className="rounded-lg border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
-      <div className="flex items-center justify-between gap-3">
-        <div>
+    <div className="min-w-0 rounded-lg border bg-card p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md sm:p-4">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-sm font-semibold">{props.title}</p>
           <p className="text-xs text-muted-foreground">{props.detail}</p>
         </div>
-        <svg viewBox="0 0 100 100" className="h-28 w-28 shrink-0 -rotate-90 rounded-full bg-muted/25 p-1">
+        <svg viewBox="0 0 100 100" className="h-20 w-20 shrink-0 -rotate-90 rounded-full bg-muted/25 p-1 sm:h-28 sm:w-28">
           <circle cx="50" cy="50" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="12" />
           {segments.map((segment) => <circle key={segment.label} cx="50" cy="50" r={radius} fill="none" stroke={segment.color} strokeWidth="12" strokeDasharray={`${segment.dash} ${circumference - segment.dash}`} strokeDashoffset={segment.offset} strokeLinecap="round"><title>{`${segment.label}: ${segment.value}`}</title></circle>)}
           <text x="50" y="51" textAnchor="middle" dominantBaseline="middle" className="rotate-90 fill-slate-900 text-[13px] font-semibold">{props.label}</text>
         </svg>
       </div>
       <div className="mt-3 grid gap-2">
-        {props.segments.map((segment) => <div key={segment.label} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/50"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />{segment.label}</span><span className="font-semibold">{segment.value}</span></div>)}
+        {props.segments.map((segment) => <div key={segment.label} className="flex min-w-0 items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors hover:bg-muted/50"><span className="flex min-w-0 items-center gap-2 truncate"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />{segment.label}</span><span className="shrink-0 font-semibold">{segment.value}</span></div>)}
       </div>
     </div>
   );
@@ -335,9 +335,9 @@ function TopProductBars(props: { products: Array<TopProductsByOutlet["products"]
         const value = Number(product.quantitySold);
         return (
           <div key={`${product.skuId}-${index}`} className="grid gap-2 rounded-lg border border-transparent p-2 transition-colors hover:border-slate-200 hover:bg-muted/30">
-            <div className="flex items-start justify-between gap-3 text-sm">
+            <div className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between sm:gap-3">
               <div className="min-w-0"><p className="truncate font-medium">{index + 1}. {product.skuName}</p><p className="truncate text-xs text-muted-foreground">{product.outletName} - {formatNumber(product.quantitySold, 3, language)} {product.unitCode}</p></div>
-              <span className="shrink-0 font-semibold">{currency(product.netSales, language)}</span>
+              <span className="break-words font-semibold sm:shrink-0">{currency(product.netSales, language)}</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full transition-all ${barColors[index % barColors.length]}`} style={{ width: `${Math.max(4, (value / maxQty) * 100)}%` }} /></div>
           </div>
@@ -359,7 +359,7 @@ function AlertSummary(props: { summary: DashboardSummary | null }) {
   if (!rows.length) return <p className="mt-4 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">Tidak ada alert operasional.</p>;
   return (
     <div className="mt-4 space-y-2">
-      {rows.map((row, index) => <div key={`${row.title}-${index}`} className="flex items-start gap-3 rounded-lg border bg-background p-3 transition-colors hover:bg-muted/35"><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${row.tone === "danger" ? "bg-red-500" : row.tone === "warning" ? "bg-amber-500" : "bg-slate-400"}`} /><div className="min-w-0"><p className="truncate text-sm font-medium">{row.title}</p><p className="truncate text-xs text-muted-foreground">{row.detail}</p></div></div>)}
+      {rows.map((row, index) => <div key={`${row.title}-${index}`} className="flex min-w-0 items-start gap-3 rounded-lg border bg-background p-3 transition-colors hover:bg-muted/35"><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${row.tone === "danger" ? "bg-red-500" : row.tone === "warning" ? "bg-amber-500" : "bg-slate-400"}`} /><div className="min-w-0"><p className="truncate text-sm font-medium">{row.title}</p><p className="truncate text-xs text-muted-foreground">{row.detail}</p></div></div>)}
     </div>
   );
 }
@@ -372,10 +372,10 @@ function MetricCard(props: { icon: ComponentType<{ className?: string }>; label:
     violet: { icon: "border-violet-100 bg-violet-50 text-violet-700", bar: "bg-violet-500", shell: "hover:border-violet-200 hover:bg-violet-50/35" },
   }[props.tone];
   return (
-    <div className={`group rounded-lg border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${theme.shell}`}>
+    <div className={`group min-w-0 rounded-lg border bg-card p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md sm:p-4 ${theme.shell}`}>
       <div className="flex items-center justify-between gap-3"><span className={`rounded-lg border p-2 transition-transform group-hover:scale-105 ${theme.icon}`}><props.icon className="h-5 w-5" /></span><span className="rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">Live</span></div>
       <p className="mt-4 text-sm text-muted-foreground">{props.label}</p>
-      <p className="mt-1 break-words text-2xl font-semibold tracking-normal">{props.value}</p>
+      <p className="mt-1 min-w-0 break-words text-xl font-semibold tracking-normal sm:text-2xl">{props.value}</p>
       <p className="mt-2 text-xs text-muted-foreground">{props.detail}</p>
       <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted"><div className={`h-full w-2/3 rounded-full transition-all group-hover:w-full ${theme.bar}`} /></div>
     </div>
@@ -383,7 +383,7 @@ function MetricCard(props: { icon: ComponentType<{ className?: string }>; label:
 }
 
 function ChartTitle(props: { icon: ComponentType<{ className?: string }>; title: string; detail: string }) {
-  return <div className="flex items-center gap-3"><span className="rounded-lg bg-primary/10 p-2 text-primary"><props.icon className="h-5 w-5" /></span><div><p className="font-semibold">{props.title}</p><p className="text-sm text-muted-foreground">{props.detail}</p></div></div>;
+  return <div className="flex min-w-0 items-center gap-3"><span className="shrink-0 rounded-lg bg-primary/10 p-2 text-primary"><props.icon className="h-5 w-5" /></span><div className="min-w-0"><p className="font-semibold">{props.title}</p><p className="text-sm leading-5 text-muted-foreground">{props.detail}</p></div></div>;
 }
 
 function percent(value: number, total: number) {

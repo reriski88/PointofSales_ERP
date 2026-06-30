@@ -139,12 +139,12 @@ export function DashboardModules() {
   }
 
   return (
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+    <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
       {visibleModules.map((item) => (
-        <div key={item.href} className="rounded-lg border p-4">
+        <div key={item.href} className="min-w-0 rounded-lg border p-3 sm:p-4">
           <item.icon className="mb-3 h-5 w-5 text-primary" />
           <p className="font-medium">{item.title}</p>
-          <p className="mt-1 text-sm leading-5 text-muted-foreground sm:min-h-16">
+          <p className="mt-1 text-sm leading-5 text-muted-foreground xl:min-h-16">
             {item.text}
           </p>
           <Button

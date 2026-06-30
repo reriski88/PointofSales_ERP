@@ -1,15 +1,26 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { inventoryBalance, inventoryBatch, product, promotion, purchaseOrderItem, saleItem, sku, stockMovement, stockOpnameItem } from "@/db/schema";
+import type { ListQuery } from "@/lib/http";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export const productRepository = {
-  findManyWithSkus(organizationId: string, outletId: string) {
+  findManyWithSkus(organizationId: string, outletId: string, options: ListQuery = {}) {
+    const search = options.search ? `%${options.search}%` : undefined;
+
     return db.query.product.findMany({
-      where: and(eq(product.organizationId, organizationId), eq(product.outletId, outletId)),
+      where: and(
+        eq(product.organizationId, organizationId),
+        eq(product.outletId, outletId),
+        search ? or(ilike(product.name, search), ilike(product.category, search)) : undefined,
+      ),
+      orderBy: [asc(product.name), asc(product.id)],
+      limit: options.limit,
+      offset: options.offset,
       with: {
         skus: {
+          orderBy: [asc(sku.name), asc(sku.id)],
           with: {
             baseUnit: true,
             saleUnit: true,
