@@ -62,11 +62,11 @@ type EditUserForm = {
 };
 
 const roleOptions = [
-  { value: "cashier", label: "Kasir" },
-  { value: "warehouse", label: "Staff Gudang" },
-  { value: "auditor", label: "Auditor" },
-  { value: "admin_outlet", label: "Admin Outlet" },
-  { value: "owner", label: "Owner" },
+  { value: "cashier", label: "Kasir", desc: "Transaksi, buka/tutup shift, lihat katalog & laporan harian." },
+  { value: "warehouse", label: "Staff Gudang", desc: "Kelola stok, stok opname, terima barang, transfer antar outlet." },
+  { value: "auditor", label: "Auditor", desc: "Lihat semua laporan & data, tapi tidak bisa ubah transaksi atau stok." },
+  { value: "admin_outlet", label: "Admin Outlet", desc: "Kelola produk, user, promosi, supplier di outlet sendiri." },
+  { value: "owner", label: "Owner", desc: "Akses penuh — kelola semua outlet, user, laporan, dan pengaturan." },
 ];
 
 const roleRank: Record<string, number> = {
@@ -498,6 +498,7 @@ export function UsersClient() {
               searchPlaceholder="Cari role..."
               emptyText="Role tidak tersedia."
             />
+            {form.role ? <p className="text-xs leading-5 text-muted-foreground">{roleOptions.find((r) => r.value === form.role)?.desc}</p> : null}
           </div>
           <div className="space-y-2">
             <Label>Akses Outlet</Label>
@@ -847,6 +848,7 @@ export function UsersClient() {
                   <div className="space-y-2">
                     <Label>Role</Label>
                     <SearchableSelect value={editForm.role} disabled={modalEditingUserId === currentUserId} onChange={(value) => setEditForm({ ...editForm, role: value })} options={availableRoleOptions} placeholder="Pilih role" searchPlaceholder="Cari role..." emptyText="Role tidak tersedia." />
+                    {editForm.role ? <p className="text-xs leading-5 text-muted-foreground">{roleOptions.find((r) => r.value === editForm.role)?.desc}</p> : null}
                   </div>
                   <label className="flex h-10 items-center gap-2 rounded-md border bg-muted/30 px-3 text-sm">
                     <input type="checkbox" checked={editForm.isActive} disabled={modalEditingUserId === currentUserId} onChange={(event) => setEditForm({ ...editForm, isActive: event.target.checked })} />

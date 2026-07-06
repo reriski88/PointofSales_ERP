@@ -888,36 +888,41 @@ export function ProductsClient() {
                   }}
                 />
                 <SelectField
-                  label="Satuan dasar stok"
+                  label={createTemplate === "count" || createTemplate === "non_stock" ? "Satuan" : "Satuan dasar stok"}
                   value={form.baseUnitId}
                   options={createBaseUnitOptions}
                   onChange={(value) =>
                     setForm((current) => ({
                       ...current,
                       baseUnitId: value,
-                      saleUnitToBaseFactor: createTemplate === "pack_weight" ? current.saleUnitToBaseFactor : conversionInput(units, value, current.saleUnitId),
+                      saleUnitId: createTemplate === "count" || createTemplate === "non_stock" ? value : current.saleUnitId,
+                      saleUnitToBaseFactor: createTemplate === "count" || createTemplate === "non_stock" ? "1" : (createTemplate === "pack_weight" ? current.saleUnitToBaseFactor : conversionInput(units, value, current.saleUnitId)),
                     }))
                   }
                 />
-                <SelectField
-                  label="Satuan jual"
-                  value={form.saleUnitId}
-                  options={createSaleUnitOptions}
-                  onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      saleUnitId: value,
-                      saleUnitToBaseFactor: createTemplate === "pack_weight" ? current.saleUnitToBaseFactor : conversionInput(units, current.baseUnitId, value),
-                    }))
-                  }
-                />
-                <Field
-                  label={createTemplate === "pack_weight" ? `Isi per ${unitCode(form.saleUnitId)}` : "Konversi stok"}
-                  numeric
-                  value={form.saleUnitToBaseFactor}
-                  helperText={createTemplate === "pack_weight" ? `Contoh: 250 berarti 1 ${unitCode(form.saleUnitId)} berisi 250 ${unitCode(form.baseUnitId)}.` : undefined}
-                  onChange={(value) => setForm({ ...form, saleUnitToBaseFactor: value })}
-                />
+                {createTemplate !== "count" && createTemplate !== "non_stock" ? (
+                  <SelectField
+                    label="Satuan jual"
+                    value={form.saleUnitId}
+                    options={createSaleUnitOptions}
+                    onChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        saleUnitId: value,
+                        saleUnitToBaseFactor: createTemplate === "pack_weight" ? current.saleUnitToBaseFactor : conversionInput(units, current.baseUnitId, value),
+                      }))
+                    }
+                  />
+                ) : null}
+                {createTemplate !== "count" && createTemplate !== "non_stock" ? (
+                  <Field
+                    label={createTemplate === "pack_weight" ? `Isi per ${unitCode(form.saleUnitId)}` : "Konversi stok"}
+                    numeric
+                    value={form.saleUnitToBaseFactor}
+                    helperText={createTemplate === "pack_weight" ? `Contoh: 250 berarti 1 ${unitCode(form.saleUnitId)} berisi 250 ${unitCode(form.baseUnitId)}.` : `1 ${unitCode(form.saleUnitId)} = ... ${unitCode(form.baseUnitId)}`}
+                    onChange={(value) => setForm({ ...form, saleUnitToBaseFactor: value })}
+                  />
+                ) : null}
                 <div className="rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground md:col-span-2 xl:col-span-4">
                   <div className="grid gap-3 md:grid-cols-3">
                     <UnitSummaryTile label="Tampil struk" value={`${displayVariantName(form)} - ${unitCode(form.saleUnitId)}`} />
@@ -954,10 +959,11 @@ export function ProductsClient() {
                   <FormSectionHeading icon={Search} title="Harga & Kode" />
                   <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     <Field label="Harga Jual" numeric value={form.price} onChange={(value) => setForm({ ...form, price: value })} />
-                    <Field label="HPP per Satuan Stok" numeric value={form.cost} onChange={(value) => setForm({ ...form, cost: value })} />
+                    <Field label="Harga Beli (Modal)" numeric value={form.cost} helperText="Harga beli per satuan stok. Digunakan untuk menghitung laba kotor." onChange={(value) => setForm({ ...form, cost: value })} />
                     <Field
                       label={`Stok Minimum (${unitCode(form.baseUnitId)})`}
                       numeric
+                      helperText="Sistem akan memberi notifikasi saat stok di bawah angka ini. Isi 0 bila tidak perlu."
                       readOnly={!form.trackInventory}
                       value={form.trackInventory ? form.minStockBaseQty : "0"}
                       onChange={(value) => setForm({ ...form, minStockBaseQty: value })}
@@ -1280,7 +1286,7 @@ export function ProductsClient() {
                   </div>
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 xl:items-start">
                     <Field label="Harga Jual" numeric value={editingVariant.sku.price} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, price: value } })} />
-                    <Field label="HPP" numeric value={editingVariant.sku.cost} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, cost: value } })} />
+                    <Field label="Harga Beli (Modal)" numeric value={editingVariant.sku.cost} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, cost: value } })} />
                     <Field label={`Stok Minimum (${unitCode(editingVariant.sku.baseUnitId)})`} numeric readOnly={!editingVariant.sku.trackInventory} value={editingVariant.sku.trackInventory ? editingVariant.sku.minStockBaseQty : "0"} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, minStockBaseQty: value } })} />
                     <SelectField label="Satuan dasar stok" value={editingVariant.sku.baseUnitId} options={unitOptionsForKind(units, editingVariant.sku.productType, [editingVariant.sku.baseUnitId])} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, baseUnitId: value, saleUnitToBaseFactor: conversionInput(units, value, editingVariant.sku.saleUnitId) } })} />
                     <SelectField label="Satuan jual" value={editingVariant.sku.saleUnitId} options={unitOptionsForKind(units, editingVariant.sku.productType, [editingVariant.sku.saleUnitId])} onChange={(value) => setEditingVariant({ ...editingVariant, sku: { ...editingVariant.sku, saleUnitId: value, saleUnitToBaseFactor: conversionInput(units, editingVariant.sku.baseUnitId, value) } })} />

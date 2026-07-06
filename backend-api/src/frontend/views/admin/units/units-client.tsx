@@ -262,7 +262,7 @@ export function UnitsClient() {
       </CollapsibleSection>
 
       <AdminModal open={isCreateOpen} title="Tambah Satuan" description="Kode satuan akan tampil di kasir dan struk." onClose={() => setIsCreateOpen(false)}>
-        <UnitFormFields form={form} onChange={setForm} />
+        <UnitFormFields form={form} onChange={setForm} units={units} />
         {message ? <p className="mt-3 text-sm text-muted-foreground">{message}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isSaving}><X className="h-4 w-4" />Batal</Button>
@@ -270,7 +270,7 @@ export function UnitsClient() {
         </div>
       </AdminModal>
       <AdminModal open={Boolean(editId)} title="Edit Satuan" description="Perubahan kode akan memengaruhi tampilan kasir dan struk berikutnya." onClose={() => setEditId(null)}>
-        <UnitFormFields form={editForm} onChange={setEditForm} />
+        <UnitFormFields form={editForm} onChange={setEditForm} units={units} />
         {message ? <p className="mt-3 text-sm text-muted-foreground">{message}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => setEditId(null)} disabled={isSaving}><X className="h-4 w-4" />Batal</Button>
@@ -281,14 +281,26 @@ export function UnitsClient() {
   );
 }
 
-function UnitFormFields(props: { form: typeof initialForm; onChange: (form: typeof initialForm) => void }) {
+function UnitFormFields(props: { form: typeof initialForm; onChange: (form: typeof initialForm) => void; units: Unit[] }) {
   const { form, onChange } = props;
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <Field label="Nama Satuan" value={form.name} onChange={(value) => onChange({ ...form, name: value })} />
       <CodeInput label="Kode Struk" value={form.code} placeholder="Kosong = otomatis dari nama" showRandomButton={false} helperText="Contoh: PCS, GR, KG." onChange={(value) => onChange({ ...form, code: normalizeUnitCode(value) })} />
       <SelectField label="Jenis" value={form.kind} options={kindOptions} onChange={(value) => onChange({ ...form, kind: value as UnitKind })} />
-      <Field label="Faktor Dasar" numeric value={form.toBaseFactor} onChange={(value) => onChange({ ...form, toBaseFactor: value })} />
+      <div className="space-y-2 md:col-span-2">
+        <Label>Konversi Satuan</Label>
+        <div className="flex items-center gap-2">
+          <span className="text-sm whitespace-nowrap text-muted-foreground">1 {form.name || "Satuan"} =</span>
+          <Input className="w-24" inputMode="decimal" value={form.toBaseFactor} onChange={(event) => onChange({ ...form, toBaseFactor: formatNumberInput(event.target.value) })} />
+          <span className="text-sm whitespace-nowrap text-muted-foreground">satuan dasar</span>
+        </div>
+        {form.name && form.toBaseFactor && Number(parseIndonesianNumber(form.toBaseFactor || "1")) > 0 ? (
+          <p className="text-xs font-medium text-sky-700">
+            1 {form.name} = {formatNumberForInput(parseIndonesianNumber(form.toBaseFactor || "1"))} satuan dasar
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

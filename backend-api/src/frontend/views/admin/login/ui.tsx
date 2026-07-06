@@ -67,16 +67,18 @@ export function AdminLoginForm() {
     const nextEmail = String(formData.get("email") ?? "").trim();
     const nextPassword = String(formData.get("password") ?? "");
 
-    const response = await fetch("/api/auth/sign-in/email", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: nextEmail,
-        password: nextPassword,
-      }),
-    });
+    let response: Response;
+    try {
+      response = await fetch("/api/auth/sign-in/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: nextEmail, password: nextPassword }),
+      });
+    } catch {
+      setMessage("Tidak dapat terhubung ke server. Pastikan server berjalan dan jaringan tersedia.");
+      setIsLoading(false);
+      return;
+    }
 
     if (!response.ok) {
       setMessage("Login gagal. Periksa email dan password admin.");

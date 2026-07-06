@@ -1562,7 +1562,15 @@ export function InventoryClient({ mode = "inventory" }: { mode?: InventoryClient
                     </table>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    <span className="font-medium text-emerald-800">Stok konsisten — tidak ada gap batch</span>
+                  </div>
+                  <p className="mt-1 text-xs text-emerald-700">Balance stok sama dengan total batch. Sistem stok FIFO berjalan normal.</p>
+                </div>
+              )}
               <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
                   <span>Show</span>

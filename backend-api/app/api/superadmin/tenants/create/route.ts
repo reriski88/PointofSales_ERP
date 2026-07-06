@@ -2,71 +2,74 @@ import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { auth } from "@/lib/auth";
-import { organization, tenantSubscription, subscriptionPlan, outlet, user, userOutlet } from "@/db/schema";
+import { organization, tenantSubscription, subscriptionPlan, outlet, user, userOutlet, unit } from "@/db/schema";
 import { ok, handleRouteError, ApiError, parseJson } from "@/lib/http";
 import { requireActor } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
 import { z } from "zod";
 
-export const runtime = "nodejs";
+const DEFAULT_UNITS = [
+  { name: "Pcs", code: "PCS", kind: "count" as const, toBaseFactor: "1" },
+  { name: "Pack", code: "PACK", kind: "package" as const, toBaseFactor: "1" },
+  { name: "Dus", code: "DUS", kind: "package" as const, toBaseFactor: "1" },
+  { name: "Lusin", code: "LSN", kind: "count" as const, toBaseFactor: "1" },
+  { name: "Gram", code: "GR", kind: "weight" as const, toBaseFactor: "1" },
+  { name: "Kilogram", code: "KG", kind: "weight" as const, toBaseFactor: "1000" },
+  { name: "Ons", code: "ONS", kind: "weight" as const, toBaseFactor: "100" },
+  { name: "Mililiter", code: "ML", kind: "weight" as const, toBaseFactor: "1" },
+  { name: "Liter", code: "LTR", kind: "weight" as const, toBaseFactor: "1000" },
+  { name: "Meter", code: "MTR", kind: "count" as const, toBaseFactor: "1" },
+];
 
 const createTenantSchema = z.object({
-  tenantName: z.string().min(1),
-  contactName: z.string().optional(),
-  contactPhone: z.string().optional(),
-  contactEmail: z.string().email().optional(),
-  address: z.string().optional(),
-  ownerName: z.string().min(1),
-  ownerEmail: z.string().email(),
-  ownerPassword: z.string().min(8),
-  planId: z.string().uuid(),
-  trialDays: z.coerce.number().int().min(0).default(14),
+  tenantName: z.string().min(1, "Nama tenant wajib diisi").max(200),
+  contactName: z.string().max(200).optional(),
+  contactPhone: z.string().max(30).optional(),
+  contactEmail: z.string().max(200).optional(),
+  address: z.string().max(500).optional(),
+  ownerEmail: z.string().email("Email owner tidak valid"),
+  ownerPassword: z.string().min(8, "Password owner minimal 8 karakter"),
+  planId: z.string().uuid("Plan ID harus berupa UUID yang valid"),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
+  trialDays: z.coerce.number().int().min(0).default(14),
 });
+
+export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   let ownerId: string | null = null;
 
   try {
+    // 0. Auth
     const actor = await requireActor(request);
-    if (actor.role !== "superadmin") throw new ApiError("FORBIDDEN", "", 403);
+    if (actor.role !== "superadmin") {
+      throw new ApiError("FORBIDDEN", "Hanya superadmin yang dapat membuat tenant", 403);
+    }
+
     const body = await parseJson(request, createTenantSchema);
 
-    // Validate plan exists before creating anything
-    const [targetPlan] = await db
-      .select({ id: subscriptionPlan.id, name: subscriptionPlan.name })
-      .from(subscriptionPlan)
-      .where(eq(subscriptionPlan.id, body.planId))
-      .limit(1);
-
+    // 0.1 Validate plan exists
+    const [targetPlan] = await db.select().from(subscriptionPlan).where(eq(subscriptionPlan.id, body.planId)).limit(1);
     if (!targetPlan) {
       throw new ApiError("NOT_FOUND", "Plan langganan tidak ditemukan. Pilih plan yang tersedia.", 404);
     }
 
-    // Create owner user via Better Auth FIRST (outside transaction)
-    // Better Auth uses its own DB connection and is NOT transaction-aware.
-    // If we put this inside the transaction and the tx fails, the user becomes orphaned.
+    // 1. Create user via Better Auth (OUTSIDE transaction)
     await auth.api.signUpEmail({
       body: {
         email: body.ownerEmail,
         password: body.ownerPassword,
-        name: body.ownerName,
+        name: body.contactName || body.tenantName,
       },
     });
 
-    const [owner] = await db
-      .select()
-      .from(user)
-      .where(eq(user.email, body.ownerEmail))
-      .limit(1);
+    // Lookup user ID after signUpEmail (Better Auth tidak return user)
+    const [ownerUser] = await db.select().from(user).where(eq(user.email, body.ownerEmail)).limit(1);
+    ownerId = ownerUser?.id ?? null;
+    if (!ownerId) throw new ApiError("INTERNAL_ERROR", "Gagal membuat akun owner", 500);
 
-    if (!owner) throw new ApiError("INTERNAL_ERROR", "Gagal membuat user owner", 500);
-    ownerId = owner.id;
-
-    // Now run the rest in a transaction.
-    // If this transaction fails, we clean up the orphaned user below.
+    // 2. Transaction: create org, update user, subscription, outlet, units
     const result = await db.transaction(async (tx) => {
-      // 1. Create organization
       const [org] = await tx
         .insert(organization)
         .values({
@@ -78,13 +81,11 @@ export async function POST(request: NextRequest) {
         })
         .returning();
 
-      // 2. Update owner with organizationId and role
       await tx
         .update(user)
         .set({ role: "owner", isActive: true, organizationId: org.id, updatedAt: new Date() })
         .where(eq(user.id, ownerId!));
 
-      // 3. Create subscription
       const isTrial = body.trialDays > 0;
       const trialEnd = new Date();
       trialEnd.setDate(trialEnd.getDate() + body.trialDays);
@@ -105,7 +106,6 @@ export async function POST(request: NextRequest) {
         })
         .returning();
 
-      // 4. Create default outlet
       const [defaultOutlet] = await tx
         .insert(outlet)
         .values({
@@ -115,11 +115,21 @@ export async function POST(request: NextRequest) {
         })
         .returning();
 
-      // 5. Assign owner to outlet
       await tx.insert(userOutlet).values({
         userId: ownerId!,
         outletId: defaultOutlet.id,
       });
+
+      // Insert default units untuk user awam
+      await tx.insert(unit).values(
+        DEFAULT_UNITS.map((u) => ({
+          organizationId: org.id,
+          name: u.name,
+          code: u.code,
+          kind: u.kind,
+          toBaseFactor: u.toBaseFactor,
+        })),
+      );
 
       return { org, sub, outlet: defaultOutlet };
     });
@@ -142,9 +152,8 @@ export async function POST(request: NextRequest) {
 
     return ok({ success: true, tenantId: result.org.id });
   } catch (error) {
-    // Cleanup orphaned user if transaction failed after signUpEmail
     if (ownerId) {
-      await db.delete(user).where(eq(user.id, ownerId)).catch(() => { /* best effort */ });
+      await db.delete(user).where(eq(user.id, ownerId)).catch(() => {});
     }
     return handleRouteError(error);
   }
