@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 const maxImageBytes = 5 * 1024 * 1024;
 
 async function requireProductUploadAccess(request: Request) {
-  const actor = await requireActor(request);
+  const actor = await requireActor(request, { skipSubscriptionCheck: true });
   await requireAnyPermission(actor, [
     { menu: "products", action: "create" },
     { menu: "products", action: "edit" },

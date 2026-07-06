@@ -42,6 +42,7 @@ import {
 } from "@/frontend/controllers/admin-data-cache";
 import { confirmAction } from "./toast-provider";
 import { SearchableSelect } from "./searchable-select";
+import { SubscriptionBanner } from "./subscription-banner";
 
 type MenuKey =
   | "dashboard"
@@ -442,6 +443,8 @@ export function AdminNav() {
           </div>
         </div>
       </header>
+
+      <SubscriptionBanner />
 
       <div
         className={`fixed inset-0 z-40 bg-black/45 transition-opacity lg:hidden ${

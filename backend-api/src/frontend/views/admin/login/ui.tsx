@@ -84,31 +84,47 @@ export function AdminLoginForm() {
       return;
     }
 
-    const [nextRoute, outletSelection] = await Promise.all([
-      firstAllowedAdminRoute(),
-      loadOutletSelection(),
-    ]);
-    setPostLoginRoute(nextRoute);
-    setOutletOptions(outletSelection.options);
-    setSelectedOutletId(outletSelection.defaultOutletId);
-    setIsLoading(false);
-    if (outletSelection.requiresFirstRunSetup) {
-      clearSelectedOutlet();
-      window.location.href = "/admin/outlets?setup=first-run";
-      return;
-    }
-    if (outletSelection.requiresOutletAssignment) {
-      clearSelectedOutlet();
-      window.location.href = "/admin/profile?notice=no-outlet";
-      return;
-    }
-    if (outletSelection.options.length <= 1) {
-      if (!outletSelection.defaultOutletId) {
-        window.location.href = nextRoute;
+    try {
+      const [nextRoute, outletSelection] = await Promise.all([
+        firstAllowedAdminRoute(),
+        loadOutletSelection(),
+      ]);
+
+      // Superadmin langsung ke /superadmin
+      if (nextRoute === "/superadmin") {
+        window.location.href = "/superadmin";
         return;
       }
-      saveSelectedOutlet(outletSelection.defaultOutletId);
-      window.location.href = nextRoute;
+
+      setPostLoginRoute(nextRoute);
+      setOutletOptions(outletSelection.options);
+      setSelectedOutletId(outletSelection.defaultOutletId);
+      setIsLoading(false);
+      if (outletSelection.requiresFirstRunSetup) {
+        clearSelectedOutlet();
+        window.location.href = "/admin/outlets?setup=first-run";
+        return;
+      }
+      if (outletSelection.requiresOutletAssignment) {
+        clearSelectedOutlet();
+        window.location.href = "/admin/profile?notice=no-outlet";
+        return;
+      }
+      if (outletSelection.options.length <= 1) {
+        if (!outletSelection.defaultOutletId) {
+          window.location.href = nextRoute;
+          return;
+        }
+        saveSelectedOutlet(outletSelection.defaultOutletId);
+        window.location.href = nextRoute;
+      }
+    } catch (e) {
+      if (e instanceof SubscriptionBlockedError) {
+        setMessage(e.message);
+        setIsLoading(false);
+        return;
+      }
+      throw e;
     }
   }
 
@@ -298,14 +314,41 @@ async function loadOutletSelection(): Promise<OutletSelection> {
 async function firstAllowedAdminRoute() {
   try {
     const response = await fetch("/api/role-access/me");
-    if (!response.ok) return "/admin";
-    const json = (await response.json()) as CurrentAccessResponse;
+    if (!response.ok) {
+      // Check for subscription errors
+      if (response.status === 402 || response.status === 403) {
+        try {
+          const err = await response.json();
+          throw new SubscriptionBlockedError(
+            err?.error?.message ?? "Langganan tidak aktif",
+            err?.error?.code ?? "SUBSCRIPTION_ERROR",
+          );
+        } catch (e) {
+          if (e instanceof SubscriptionBlockedError) throw e;
+        }
+      }
+      return "/admin";
+    }
+    const json = (await response.json()) as CurrentAccessResponse & { data?: { role?: string } };
+    // Superadmin redirect ke /superadmin
+    const role = (json as Record<string, unknown>)["data"] &&
+      typeof (json as Record<string, unknown>)["data"] === "object"
+      ? ((json as Record<string, unknown>)["data"] as Record<string, unknown>)["role"]
+      : undefined;
+    if (role === "superadmin") return "/superadmin";
     return (
       routeOrder.find((route) =>
-        json.data.permissions[route.menuKey]?.includes("view"),
+        (json as CurrentAccessResponse).data.permissions[route.menuKey]?.includes("view"),
       )?.href ?? "/admin/profile"
     );
-  } catch {
+  } catch (e) {
+    if (e instanceof SubscriptionBlockedError) throw e;
     return "/admin";
+  }
+}
+
+class SubscriptionBlockedError extends Error {
+  constructor(message: string, public code: string) {
+    super(message);
   }
 }

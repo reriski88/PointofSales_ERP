@@ -20,7 +20,7 @@ const timestamps = {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 };
 
-export const appRoleEnum = pgEnum("app_role", ["owner", "admin_outlet", "cashier", "warehouse", "auditor"]);
+export const appRoleEnum = pgEnum("app_role", ["superadmin", "owner", "admin_outlet", "cashier", "warehouse", "auditor"]);
 export const unitKindEnum = pgEnum("unit_kind", ["weight", "count", "package"]);
 export const stockMovementTypeEnum = pgEnum("stock_movement_type", [
   "opening",
@@ -83,6 +83,14 @@ export const accountingAccountTypeEnum = pgEnum("accounting_account_type", [
 export const accountingNormalBalanceEnum = pgEnum("accounting_normal_balance", ["debit", "credit"]);
 export const journalEntryStatusEnum = pgEnum("journal_entry_status", ["posted", "voided"]);
 export const cashLedgerDirectionEnum = pgEnum("cash_ledger_direction", ["in", "out"]);
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "trial",
+  "active",
+  "grace_period",
+  "suspended",
+  "cancelled",
+  "expired",
+]);
 
 export const organization = pgTable("organization", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -91,6 +99,11 @@ export const organization = pgTable("organization", {
   receiptLayout: jsonb("receipt_layout"),
   rolePermissions: jsonb("role_permissions"),
   posSettings: jsonb("pos_settings"),
+  contactName: text("contact_name"),
+  contactPhone: text("contact_phone"),
+  contactEmail: text("contact_email"),
+  address: text("address"),
+  isActive: boolean("is_active").notNull().default(true),
   ...timestamps,
 });
 
@@ -883,6 +896,74 @@ export const wasteAdjustment = pgTable(
   }),
 );
 
+export const subscriptionPlan = pgTable("subscription_plan", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  code: text("code").notNull(),
+  priceMonthly: numeric("price_monthly", { precision: 14, scale: 2 }).notNull().default("0"),
+  priceYearly: numeric("price_yearly", { precision: 14, scale: 2 }).notNull().default("0"),
+  maxOutlets: integer("max_outlets").notNull().default(1),
+  maxUsers: integer("max_users").notNull().default(3),
+  maxSkus: integer("max_skus").notNull().default(50),
+  features: jsonb("features").notNull().default({}),
+  isActive: boolean("is_active").notNull().default(true),
+  ...timestamps,
+});
+
+export const tenantSubscription = pgTable(
+  "tenant_subscription",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    planId: uuid("plan_id")
+      .notNull()
+      .references(() => subscriptionPlan.id),
+    status: subscriptionStatusEnum("status").notNull().default("trial"),
+    trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+    currentPeriodStart: timestamp("current_period_start", { withTimezone: true }).notNull().defaultNow(),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }).notNull(),
+    billingCycle: text("billing_cycle").notNull().default("monthly"),
+    autoRenew: boolean("auto_renew").notNull().default(true),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    suspendedReason: text("suspended_reason"),
+    ...timestamps,
+  },
+  (table) => ({
+    subscriptionOrgIdx: index("subscription_org_idx").on(table.organizationId),
+    subscriptionStatusIdx: index("subscription_status_idx").on(table.status),
+  }),
+);
+
+export const subscriptionPayment = pgTable(
+  "subscription_payment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantSubscriptionId: uuid("tenant_subscription_id")
+      .notNull()
+      .references(() => tenantSubscription.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    method: text("method"),
+    reference: text("reference"),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    status: text("status").notNull().default("confirmed"),
+    note: text("note"),
+    paidAt: timestamp("paid_at", { withTimezone: true }).defaultNow(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    paymentOrgIdx: index("payment_org_idx").on(table.organizationId),
+    paymentSubscriptionIdx: index("payment_subscription_idx").on(table.tenantSubscriptionId),
+  }),
+);
+
 export const syncQueue = pgTable(
   "sync_queue",
   {
@@ -987,6 +1068,7 @@ export const skuRelations = relations(sku, ({ one }) => ({
 
 export type AppRole = (typeof appRoleEnum.enumValues)[number];
 export type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
+export type SubscriptionStatus = (typeof subscriptionStatusEnum.enumValues)[number];
 export type ShiftCashMovementType = (typeof shiftCashMovementTypeEnum.enumValues)[number];
 export type AccountingAccountType = (typeof accountingAccountTypeEnum.enumValues)[number];
 export type AccountingNormalBalance = (typeof accountingNormalBalanceEnum.enumValues)[number];

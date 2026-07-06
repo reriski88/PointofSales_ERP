@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pos_cemilan_kasir/features/home/data/pos_api.dart';
 import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
+import 'package:pos_cemilan_kasir/shared/utils/api_errors.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AuthStatus { booting, signedOut, signedIn }
@@ -164,7 +165,7 @@ class AuthCubit extends Cubit<AuthState> {
       emit(
         state.copyWith(
           currentUser: _decodeCachedProfile(),
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: showErrors
               ? 'Profil kasir belum bisa dimuat. ${readableApiError(error)}'
               : state.message,
@@ -222,7 +223,7 @@ class AuthCubit extends Cubit<AuthState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Update setting user gagal. ${readableApiError(error)}',
         ),
       );
@@ -329,14 +330,4 @@ class AuthCubit extends Cubit<AuthState> {
   }
 }
 
-String readableApiError(Object error) {
-  if (error is ApiException) {
-    return error.message;
-  }
-  if (error is ApiUnavailable) {
-    return 'Server tidak terhubung.';
-  }
-  return error.toString();
-}
-
-bool _serverReachableAfter(Object error) => error is! ApiUnavailable;
+// readableApiError & serverReachableAfter — imported from api_errors.dart

@@ -3,6 +3,7 @@ import { writeAudit } from "@/lib/audit";
 import { fixed } from "@/lib/number";
 import { ApiError, created, handleRouteError, ok, parseJson, parseListQuery } from "@/lib/http";
 import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
+import { enforceSkuLimit } from "@/lib/subscription-limits";
 import { createProductSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
     await requirePermission(actor, "products", "create");
+    await enforceSkuLimit(actor);
     const outletId = requireSpecificOutletId(new URL(request.url).searchParams.get("outletId"));
     await requireOutletAccess(actor, outletId);
     const body = await parseJson(request, createProductSchema);

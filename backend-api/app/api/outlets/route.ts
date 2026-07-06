@@ -2,6 +2,7 @@ import { outletRepository } from "@/backend/repositories/outlet-repository";
 import { writeAudit } from "@/lib/audit";
 import { ApiError, created, handleRouteError, ok, parseJson } from "@/lib/http";
 import { actorHasPermission, requireActor, requirePermission } from "@/lib/rbac";
+import { enforceOutletLimit } from "@/lib/subscription-limits";
 import { createOutletSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
     await requirePermission(actor, "outlets", "create");
+    await enforceOutletLimit(actor);
     const body = await parseJson(request, createOutletSchema);
     const [row] = await outletRepository.create({
         organizationId: actor.organizationId,

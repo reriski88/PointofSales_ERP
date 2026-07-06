@@ -8,6 +8,7 @@ import {
   type RoleAccessAction,
   type RoleAccessMenuKey,
 } from "@/lib/role-access";
+import { requireActiveSubscription } from "@/lib/subscription-guard";
 
 export type Actor = {
   id: string;
@@ -19,6 +20,7 @@ export type Actor = {
 };
 
 export const roleRank: Record<AppRole, number> = {
+  superadmin: 99,
   cashier: 10,
   warehouse: 20,
   auditor: 30,
@@ -30,7 +32,7 @@ export function canManageRole(actorRole: AppRole, targetRole: AppRole) {
   return roleRank[actorRole] > roleRank[targetRole];
 }
 
-export async function requireActor(request: Request): Promise<Actor> {
+export async function requireActor(request: Request, opts?: { skipSubscriptionCheck?: boolean }): Promise<Actor> {
   const session = await auth.api.getSession({
     headers: request.headers,
   });
@@ -49,18 +51,28 @@ export async function requireActor(request: Request): Promise<Actor> {
     throw new ApiError("FORBIDDEN", "User is inactive", 403);
   }
 
-  if (!actor.organizationId) {
+  // Superadmin tidak wajib punya organizationId
+  if (actor.role !== "superadmin" && !actor.organizationId) {
     throw new ApiError("FORBIDDEN", "User is not assigned to an organization", 403);
   }
 
-  return {
+  const result: Actor = {
     id: actor.id,
     name: actor.name,
     email: actor.email,
     image: actor.image,
     role: actor.role,
-    organizationId: actor.organizationId,
+    organizationId: actor.organizationId ?? "", // superadmin = ""
   };
+
+  // Subscription check — skip untuk route yang perlu bypass (login flow, dll) dan semua GET read-only.
+  // Operasi read-only hanya perlu autentikasi, bukan subscription aktif.
+  // Hanya mutasi (POST/PATCH/PUT/DELETE) yang diblokir saat subscription bermasalah.
+  if (!opts?.skipSubscriptionCheck && request.method !== "GET") {
+    await requireActiveSubscription(result);
+  }
+
+  return result;
 }
 
 export function requireRole(actor: Actor, allowed: AppRole[]) {

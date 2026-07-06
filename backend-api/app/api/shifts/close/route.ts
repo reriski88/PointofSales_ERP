@@ -3,6 +3,7 @@ import { writeAudit } from "@/lib/audit";
 import { ApiError, handleRouteError, ok, parseJson } from "@/lib/http";
 import { decimal, fixed } from "@/lib/number";
 import { requireActor, requireOutletAccess, requirePermission } from "@/lib/rbac";
+import { requireActiveSubscription } from "@/lib/subscription-guard";
 import { publishRealtimeEvent } from "@/lib/realtime";
 import { closeShiftSchema } from "@/lib/validation";
 

@@ -7,6 +7,11 @@ export type ApiErrorCode =
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
+  | "SUBSCRIPTION_REQUIRED"
+  | "TRIAL_EXPIRED"
+  | "SUBSCRIPTION_EXPIRED"
+  | "SUBSCRIPTION_SUSPENDED"
+  | "SUBSCRIPTION_ENDED"
   | "INTERNAL_ERROR";
 
 export class ApiError extends Error {
@@ -78,7 +83,7 @@ export function handleRouteError(error: unknown) {
   }
 
   if (error instanceof ApiError) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         error: {
           code: error.code,
@@ -88,6 +93,17 @@ export function handleRouteError(error: unknown) {
       },
       { status: error.status },
     );
+    // Tandai response subscription error dengan header khusus untuk client
+    if (
+      error.code === "SUBSCRIPTION_REQUIRED" ||
+      error.code === "TRIAL_EXPIRED" ||
+      error.code === "SUBSCRIPTION_EXPIRED" ||
+      error.code === "SUBSCRIPTION_SUSPENDED" ||
+      error.code === "SUBSCRIPTION_ENDED"
+    ) {
+      response.headers.set("X-Subscription-Error", "true");
+    }
+    return response;
   }
 
   console.error(error);

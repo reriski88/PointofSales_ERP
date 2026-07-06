@@ -54,6 +54,7 @@ export const roleAccessMenus: Array<{
 ];
 
 export const appRoles: AppRole[] = [
+  "superadmin",
   "cashier",
   "warehouse",
   "auditor",
@@ -62,6 +63,7 @@ export const appRoles: AppRole[] = [
 ];
 
 export const roleLabels: Record<AppRole, string> = {
+  superadmin: "Superadmin",
   cashier: "Kasir",
   warehouse: "Staff Gudang",
   auditor: "Auditor",
@@ -70,6 +72,7 @@ export const roleLabels: Record<AppRole, string> = {
 };
 
 export const roleDescriptions: Record<AppRole, string> = {
+  superadmin: "IT Support yang mengelola seluruh tenant, langganan, dan sistem.",
   owner: "Akses penuh seluruh aplikasi, termasuk role akses dan semua outlet.",
   admin_outlet: "Mengelola operasional outlet, produk, user outlet, inventory, kasir, dan laporan.",
   auditor: "Melihat dashboard, master data, inventory, dan laporan tanpa mengubah operasional.",
@@ -78,6 +81,7 @@ export const roleDescriptions: Record<AppRole, string> = {
 };
 
 export const defaultRoleAccess: RoleAccessMap = {
+  superadmin: allMenusAllActions(),
   owner: allMenusAllActions(),
   admin_outlet: access({
     dashboard: ["view", "export"],

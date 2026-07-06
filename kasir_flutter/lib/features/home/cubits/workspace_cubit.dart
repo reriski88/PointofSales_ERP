@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pos_cemilan_kasir/features/home/cubits/auth_cubit.dart';
 import 'package:pos_cemilan_kasir/features/home/data/pos_api.dart';
 import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
+import 'package:pos_cemilan_kasir/shared/utils/api_errors.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class WorkspaceState {
@@ -186,7 +187,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: showErrors ? readableApiError(error) : state.message,
         ),
       );
@@ -271,7 +272,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Memakai katalog terakhir. ${readableApiError(error)}',
         ),
       );
@@ -327,7 +328,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Buka shift gagal. ${readableApiError(error)}',
         ),
       );
@@ -370,7 +371,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Tutup shift gagal. ${readableApiError(error)}',
         ),
       );
@@ -399,7 +400,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Ringkasan shift gagal dimuat. ${readableApiError(error)}',
         ),
       );
@@ -456,7 +457,7 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Mutasi kas gagal. ${readableApiError(error)}',
         ),
       );
@@ -596,8 +597,6 @@ class WorkspaceCubit extends Cubit<WorkspaceState> {
     return outlets.first;
   }
 }
-
-bool _serverReachableAfter(Object error) => error is! ApiUnavailable;
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull {

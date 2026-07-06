@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { ApiError, created, handleRouteError, ok, parseJson } from "@/lib/http";
 import { accessibleOutletIds, canManageRole, requireActor, requirePermission, type Actor } from "@/lib/rbac";
+import { enforceUserLimit } from "@/lib/subscription-limits";
 import { createUserSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -35,6 +36,7 @@ export async function POST(request: Request) {
   try {
     const actor = await requireActor(request);
     await requirePermission(actor, "users", "create");
+    await enforceUserLimit(actor);
     const body = await parseJson(request, createUserSchema);
     await assertUserCreateAllowed(actor, body.role, body.outletIds);
 

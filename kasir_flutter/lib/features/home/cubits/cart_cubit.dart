@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pos_cemilan_kasir/features/home/cubits/auth_cubit.dart';
 import 'package:pos_cemilan_kasir/features/home/data/pos_api.dart';
 import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
+import 'package:pos_cemilan_kasir/shared/utils/api_errors.dart';
 
 class CartPricing {
   const CartPricing({
@@ -361,7 +362,7 @@ class CartCubit extends Cubit<CartState> {
           clearSaleQuote: !keepCachedQuote,
           clearSaleQuoteSignature: !keepCachedQuote,
           isQuoteLoading: false,
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           hasConnectivitySignal: true,
           message: showErrors
               ? 'Gagal menghitung total backend. ${readableApiError(error)}'
@@ -575,7 +576,7 @@ List<CartSession> _normalizeCartCustomerLabels(List<CartSession> sessions) {
   ];
 }
 
-bool _serverReachableAfter(Object error) => error is! ApiUnavailable;
+// ApiException, ApiUnavailable, readableApiError — imported from api_errors.dart
 
 double _roundToCashHundred(num value) {
   if (value <= 0) return 0;

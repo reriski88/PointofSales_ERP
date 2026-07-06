@@ -2,9 +2,41 @@ import "dotenv/config";
 import { and, eq } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { auth } from "@/lib/auth";
-import { inventoryBalance, organization, outlet, product, sku, stockMovement, unit, user, userOutlet } from "@/db/schema";
+import { inventoryBalance, organization, outlet, product, sku, stockMovement, subscriptionPlan, tenantSubscription, unit, user, userOutlet } from "@/db/schema";
 
 async function main() {
+  // --- SUPERADMIN ---
+  const saEmail = process.env.SEED_SUPERADMIN_EMAIL ?? "it@email.com";
+  const saPassword = process.env.SEED_SUPERADMIN_PASSWORD ?? "Pwd!12345.";
+
+  let [superadmin] = await db.select().from(user).where(eq(user.email, saEmail)).limit(1);
+  if (!superadmin) {
+    await auth.api.signUpEmail({
+      body: { email: saEmail, password: saPassword, name: "IT Support" },
+    });
+    [superadmin] = await db.select().from(user).where(eq(user.email, saEmail)).limit(1);
+  }
+  if (superadmin) {
+    await db
+      .update(user)
+      .set({ role: "superadmin", isActive: true, updatedAt: new Date() })
+      .where(eq(user.id, superadmin.id));
+  }
+
+  // --- SUBSCRIPTION PLANS ---
+  const plans = [
+    { name: "Basic", code: "basic", priceMonthly: "0", priceYearly: "0", maxOutlets: 1, maxUsers: 3, maxSkus: 50 },
+    { name: "Pro", code: "pro", priceMonthly: "150000", priceYearly: "1500000", maxOutlets: 5, maxUsers: 20, maxSkus: 500 },
+    { name: "Enterprise", code: "enterprise", priceMonthly: "500000", priceYearly: "5000000", maxOutlets: 999, maxUsers: 999, maxSkus: 99999 },
+  ];
+  for (const plan of plans) {
+    const [existingPlan] = await db.select().from(subscriptionPlan).where(eq(subscriptionPlan.code, plan.code)).limit(1);
+    if (!existingPlan) {
+      await db.insert(subscriptionPlan).values(plan);
+    }
+  }
+
+  // --- DEFAULT ORGANIZATION ---
   const ownerEmail = process.env.SEED_OWNER_EMAIL ?? "admin@email.com";
   const ownerPassword = process.env.SEED_OWNER_PASSWORD ?? "Pwd!12345.";
   const ownerName = process.env.SEED_OWNER_NAME ?? "Admin POS Cemilan";
@@ -66,6 +98,29 @@ async function main() {
       outletId: mainOutlet.id,
     })
     .onConflictDoNothing();
+
+  // --- DEFAULT TRIAL SUBSCRIPTION ---
+  const [basicPlan] = await db.select().from(subscriptionPlan).where(eq(subscriptionPlan.code, "basic")).limit(1);
+  const [existingSub] = await db
+    .select()
+    .from(tenantSubscription)
+    .where(eq(tenantSubscription.organizationId, org.id))
+    .limit(1);
+  if (basicPlan && !existingSub) {
+    const trialEnd = new Date();
+    trialEnd.setDate(trialEnd.getDate() + 14);
+    const periodEnd = new Date();
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+    await db.insert(tenantSubscription).values({
+      organizationId: org.id,
+      planId: basicPlan.id,
+      status: "trial",
+      trialEndsAt: trialEnd,
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: periodEnd,
+      billingCycle: "monthly",
+    });
+  }
 
   const unitDefinitions = [
     { name: "Gram", code: "g", kind: "weight" as const, toBaseFactor: "1.000000" },

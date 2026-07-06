@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
+import 'package:pos_cemilan_kasir/shared/utils/api_errors.dart';
 
 class PosApi {
   PosApi({required String baseUrl, this.cookie = '', this.bearer = ''})
@@ -507,18 +508,4 @@ class PosApi {
   }
 }
 
-class ApiException implements Exception {
-  ApiException(this.statusCode, this.message);
-
-  final int statusCode;
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-class ApiUnavailable implements Exception {
-  ApiUnavailable(this.message);
-
-  final String message;
-}
+// ApiException, ApiUnavailable, readableApiError — imported from api_errors.dart

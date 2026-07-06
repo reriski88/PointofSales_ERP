@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const actor = await requireActor(request);
+    const actor = await requireActor(request, { skipSubscriptionCheck: true });
     await requirePermission(actor, "cashier", "create");
     const body = await parseJson(request, syncPushSchema);
     await requireOutletAccess(actor, body.outletId);

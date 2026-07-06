@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pos_cemilan_kasir/features/home/cubits/auth_cubit.dart';
 import 'package:pos_cemilan_kasir/features/home/data/pos_api.dart';
 import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
+import 'package:pos_cemilan_kasir/shared/utils/api_errors.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CheckoutState {
@@ -372,7 +373,7 @@ class CheckoutCubit extends Cubit<CheckoutState> {
     } catch (error) {
       emit(
         state.copyWith(
-          isOnline: _serverReachableAfter(error),
+          isOnline: serverReachableAfter(error),
           message: 'Sync gagal. ${readableApiError(error)}',
         ),
       );
@@ -587,4 +588,4 @@ double _asDouble(dynamic value, {double fallback = 0}) {
   return double.tryParse(value.toString()) ?? fallback;
 }
 
-bool _serverReachableAfter(Object error) => error is! ApiUnavailable;
+// ApiException, ApiUnavailable, readableApiError — imported from api_errors.dart

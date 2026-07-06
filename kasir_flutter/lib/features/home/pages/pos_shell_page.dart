@@ -18,6 +18,9 @@ import 'package:pos_cemilan_kasir/features/home/models/pos_models.dart';
 import 'package:pos_cemilan_kasir/features/home/widgets/login_view.dart';
 import 'package:pos_cemilan_kasir/features/home/widgets/printer_settings_card.dart';
 import 'package:pos_cemilan_kasir/shared/widgets/app_section.dart';
+import 'package:pos_cemilan_kasir/shared/utils/api_errors.dart';
+import 'package:pos_cemilan_kasir/shared/widgets/shift_indicator.dart';
+import 'package:pos_cemilan_kasir/shared/widgets/subscription_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 part 'pos_shell_widgets.dart';
@@ -43,7 +46,7 @@ class PosShell extends StatefulWidget {
 }
 
 class _PosShellState extends State<PosShell> {
-  static const _defaultBaseUrl = 'http://localhost:3000';
+  static const _defaultBaseUrl = 'http://localhost:3001';
   static const _printerEnabledKey = 'printer_enabled';
   static const _printerBluetoothAddressKey = 'printer_bluetooth_address';
   static const _printerBluetoothConnectedKey = 'printer_bluetooth_connected';
@@ -590,7 +593,7 @@ class _PosShellState extends State<PosShell> {
     );
   }
 
-  bool _serverReachableAfter(Object error) => error is! ApiUnavailable;
+  bool _serverReachableAfter(Object error) => serverReachableAfter(error);
 
   Future<void> _loadSalesReport({bool showErrors = true}) async {
     final reportOutletId =
@@ -2419,6 +2422,7 @@ class _PosShellState extends State<PosShell> {
         ),
         body: Column(
           children: [
+            const SubscriptionStatusBar(),
             if (_isBusy || _isReportLoading)
               const LinearProgressIndicator(minHeight: 3),
             if (_activeShift != null)
@@ -2535,34 +2539,46 @@ class _PosShellState extends State<PosShell> {
         final width = constraints.maxWidth;
         final isWide = width >= 980;
         final isTablet = width >= 720;
+
+        Widget content;
         if (isWide) {
-          return Padding(
+          content = Padding(
             padding: const EdgeInsets.all(14),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  flex: 7,
-                  child: Column(children: [Expanded(child: products)]),
-                ),
+                Expanded(flex: 7, child: Column(children: [Expanded(child: products)])),
                 const SizedBox(width: 12),
                 SizedBox(width: 420, child: cart),
               ],
             ),
           );
+        } else {
+          content = Padding(
+            padding: EdgeInsets.fromLTRB(10, 10, 10, isTablet ? 10 : 96),
+            child: Column(
+              children: [
+                Expanded(child: products),
+                if (isTablet) ...[const SizedBox(height: 10), SizedBox(height: 420, child: cart)],
+              ],
+            ),
+          );
         }
 
-        return Padding(
-          padding: EdgeInsets.fromLTRB(10, 10, 10, isTablet ? 10 : 96),
-          child: Column(
-            children: [
-              Expanded(child: products),
-              if (isTablet) ...[
-                const SizedBox(height: 10),
-                SizedBox(height: 420, child: cart),
-              ],
-            ],
-          ),
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+              child: ShiftIndicator(
+                isShiftOpen: _activeShift != null,
+                expectedCash: _activeShift?.expectedCash ?? 0,
+                onOpen: _activeShift == null && !_isBusy ? _openShift : null,
+                onClose: _activeShift != null && !_isBusy ? _closeShift : null,
+                isBusy: _isBusy,
+              ),
+            ),
+            Expanded(child: content),
+          ],
         );
       },
     );

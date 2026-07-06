@@ -36,7 +36,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const actor = await requireActor(request);
+    const actor = await requireActor(request, { skipSubscriptionCheck: true });
     await requirePermission(actor, "profile", "edit");
     const body = await parseJson(request, updateProfileSchema);
 
